@@ -165,10 +165,6 @@ CHUNK_OVERLAP=200
 4. Push в branch (`git push origin feature/amazing-feature`)
 5. Откройте Pull Request
 
-## 📝 Лицензия
-
-MIT License - см. [LICENSE](LICENSE) файл.
-
 ## 👨‍💻 Автор
 
 **Петр Балдаев** - AI/ML Engineer
