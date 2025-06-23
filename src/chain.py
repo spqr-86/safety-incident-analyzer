@@ -3,7 +3,7 @@
 from langchain_openai import ChatOpenAI
 from langchain.chains import ConversationalRetrievalChain
 from langchain.memory import ConversationBufferMemory
-from langchain.prompts import PromptTemplate  # Убедимся, что PromptTemplate импортирован
+from langchain.prompts import PromptTemplate
 from .vector_store import load_vector_store
 import config
 
@@ -47,7 +47,7 @@ def create_conversational_chain():
         output_key='answer'
     )
 
-    # Собираем финальную цепочку, добавляя наш кастомный промпт
+    # Собираем финальную цепочку
     chain = ConversationalRetrievalChain.from_llm(
         llm=llm,
         retriever=compression_retriever,
