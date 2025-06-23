@@ -1,42 +1,61 @@
 # src/chain.py
 
 from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
-from langchain_core.runnables import RunnablePassthrough, Runnable
-from langchain_core.output_parsers import StrOutputParser
-
+from langchain.chains import ConversationalRetrievalChain
+from langchain.memory import ConversationBufferMemory
+from langchain.prompts import PromptTemplate  # Убедимся, что PromptTemplate импортирован
 from .vector_store import load_vector_store
 import config
 
-def create_rag_chain() -> Runnable:
+from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
+from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+
+CONDENSE_QUESTION_TEMPLATE = """
+Учитывая историю предыдущего диалога и новый вопрос, переформулируй новый вопрос так, чтобы он был самостоятельным и полным. 
+Он должен содержать весь необходимый контекст из истории диалога.
+Это ОЧЕНЬ ВАЖНО: возвращай только сам переформулированный вопрос, без лишних слов и прелюдий.
+
+История диалога:
+{chat_history}
+
+Новый вопрос: {question}
+
+Самостоятельный вопрос:"""
+
+CONDENSE_QUESTION_PROMPT = PromptTemplate.from_template(CONDENSE_QUESTION_TEMPLATE)
+# ----------------------------------------------------
+
+
+def create_conversational_chain():
     """
-    Создает и возвращает полную RAG цепочку, готовую к использованию.
-    
-    :return: Объект RAG-цепочки.
+    Создает и возвращает RAG-цепочку с памятью, ре-ранкером и кастомной трансформацией вопроса.
     """
     vector_store = load_vector_store()
-    retriever = vector_store.as_retriever(search_kwargs={"k": 3})
     
+    base_retriever = vector_store.as_retriever(search_kwargs={"k": 10})
+    compressor = FlashrankRerank(top_n=3) # Указываем, что после ре-ранкинга нужно оставить топ-3
+    compression_retriever = ContextualCompressionRetriever(
+        base_retriever=base_retriever, 
+        base_compressor=compressor
+    )
+
     llm = ChatOpenAI(model_name=config.MODEL_NAME, temperature=config.TEMPERATURE)
 
-    template = """
-    Используй следующие фрагменты контекста, чтобы ответить на вопрос в конце.
-    Если ты не знаешь ответа, просто скажи, что не знаешь, не пытайся придумать ответ.
-    Ответ должен быть максимально лаконичным и по делу. Предоставляй ответ только на русском языке.
+    memory = ConversationBufferMemory(
+        memory_key="chat_history",
+        return_messages=True,
+        output_key='answer'
+    )
 
-    Контекст: {context}
-
-    Вопрос: {question}
-
-    Полезный ответ:"""
-    
-    prompt = PromptTemplate.from_template(template)
-
-    rag_chain = (
-        {"context": retriever, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
+    # Собираем финальную цепочку, добавляя наш кастомный промпт
+    chain = ConversationalRetrievalChain.from_llm(
+        llm=llm,
+        retriever=compression_retriever,
+        memory=memory,
+        condense_question_prompt=CONDENSE_QUESTION_PROMPT,
+        verbose=True,
+        chain_type="stuff",
+        return_source_documents=True
     )
     
-    return rag_chain
+    return chain

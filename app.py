@@ -1,81 +1,96 @@
-# --- FIX ДЛЯ ДЕПЛОЯ НА STREAMLIT CLOUD ---
-__import__('pysqlite3')
+import os
 import sys
-sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+import streamlit as st
+
+# --- Умный FIX для ChromaDB/SQLite3 в облаке ---
+if os.path.exists("/home/adminuser/venv/bin/python"):
+    print("Обнаружено окружение Streamlit Cloud. Применяю фикс для SQLite3.")
+    try:
+        __import__('pysqlite3')
+        sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+        print("Фикс для SQLite3 успешно применен.")
+    except ImportError:
+        print("ПРЕДУПРЕЖДЕНИЕ: Не удалось импортировать pysqlite3...")
 # -----------------------------------------
 
-import streamlit as st
-import os
-import config  # Импортируем наш конфиг для доступа к путям
-from dotenv import load_dotenv
-from src.chain import create_rag_chain
-from src.vector_store import load_vector_store
+import config
+from src.chain import create_conversational_chain
 
-load_dotenv()
-
-# --- Конфигурация страницы Streamlit ---
-st.set_page_config(
-    page_title="AI Safety Compliance Assistant",
-    page_icon="🤖",
-    layout="wide"
-)
-
+# --- Конфигурация страницы ---
+st.set_page_config(page_title="AI Safety Compliance Assistant", page_icon="🤖", layout="wide")
 st.title("🤖 AI Safety Compliance Assistant")
 st.caption(f"Ваш ИИ-помощник по нормативной документации. Модель: {config.MODEL_NAME}")
 
-# --- Кеширование ресурсов ---
-# Эта функция будет выполнена только один раз, и ее результат сохранится в кеше.
+# --- Загрузка и кеширование ресурсов ---
 @st.cache_resource
-def load_resources():
-    """
-    Загружает RAG-цепочку и ретривер.
-    Проверяет наличие векторной базы данных перед загрузкой.
-    """
-    # Проверка, существует ли база данных
+def load_chain():
     if not os.path.exists(config.CHROMA_DB_PATH) or not os.listdir(config.CHROMA_DB_PATH):
-        st.error(f"База данных не найдена. Пожалуйста, запустите 'python index.py' в терминале для ее создания.")
-        return None, None
-    
+        st.error(f"База данных не найдена. Пожалуйста, запустите 'python index.py' для ее создания.")
+        return None
     try:
-        rag_chain = create_rag_chain()
-        # Нам нужен ретривер отдельно, чтобы показать источники
-        vector_store = load_vector_store()
-        retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-        return rag_chain, retriever
+        chain = create_conversational_chain()
+        return chain
     except Exception as e:
         st.error(f"Произошла ошибка при загрузке RAG-цепочки: {e}")
-        return None, None
+        return None
 
 # --- Основная логика приложения ---
-rag_chain, retriever = load_resources()
+rag_chain = load_chain()
 
-if rag_chain and retriever:
-    # Поле для ввода вопроса
-    user_query = st.text_input(
-        "Задайте ваш вопрос:",
-        placeholder="Например: Какие есть виды инструктажей по охране труда?"
-    )
+if rag_chain:
+    # Инициализация истории чата
+    if "messages" not in st.session_state:
+        st.session_state.messages = [{"role": "assistant", "content": "Здравствуйте! Какой у вас вопрос по нормативной документации?"}]
 
-    if user_query:
-        with st.spinner("Анализирую документы..."):
-            # Получаем ответ от цепочки
-            final_answer = rag_chain.invoke(user_query)
+    # Отображение истории чата
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Обработка нового ввода пользователя
+    if user_query := st.chat_input("Задайте ваш вопрос..."):
+        st.session_state.messages.append({"role": "user", "content": user_query})
+        with st.chat_message("user"):
+            st.markdown(user_query)
+
+        # Отображаем ответ ассистента, используя стриминг и плейсхолдеры
+        with st.chat_message("assistant"):
+            # Создаем плейсхолдеры, которые будем обновлять
+            answer_placeholder = st.empty()
+            sources_placeholder = st.empty()
             
-            # Получаем источники от ретривера
-            retrieved_docs = retriever.invoke(user_query)
+            full_response = ""
+            source_documents = []
 
-            # Отображаем ответ
-            st.markdown("### Ответ:")
-            st.info(final_answer)
+            # Итерируемся по потоку данных от цепочки
+            for chunk in rag_chain.stream({"question": user_query, "chat_history": st.session_state.messages}):
+                # Ловим и собираем кусочки ответа
+                if "answer" in chunk:
+                    full_response += chunk["answer"]
+                    answer_placeholder.markdown(full_response + "▌") # ▌ - эффект курсора
 
-            # Отображаем источники в выпадающем списке
-            with st.expander("Показать источники, использованные для ответа"):
-                for i, doc in enumerate(retrieved_docs):
-                    st.subheader(f"Источник #{i+1}")
-                    st.write(f"**Файл:** {doc.metadata.get('source', 'N/A')}")
-                    st.write(f"**Страница:** {doc.metadata.get('page', 0) + 1}") # +1 для человеческого восприятия
-                    st.write("**Содержимое:**")
-                    # Используем st.text для сохранения форматирования
-                    st.text(doc.page_content)
+                # Ловим и сохраняем источники
+                if "source_documents" in chunk:
+                    source_documents = chunk["source_documents"]
+
+            # Обновляем плейсхолдер ответа финальным текстом без курсора
+            answer_placeholder.markdown(full_response)
+            
+            # Отображаем найденные источники в их плейсхолдере
+            if source_documents:
+                with sources_placeholder.expander("Показать источники"):
+                    for i, doc in enumerate(source_documents):
+                        st.subheader(f"Источник #{i+1}")
+                        try:
+                            source = doc.metadata.get('source', 'N/A').split('/')[-1]
+                            page = doc.metadata.get('page', 0) + 1
+                            st.write(f"**Файл:** {source}, **Страница:** {page}")
+                        except Exception:
+                            st.write(doc.metadata) # На случай, если метаданные другие
+                        st.text(doc.page_content)
+                        st.write("---")
+
+        # Добавляем полный ответ ассистента в историю
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
 else:
-    st.warning("Приложение не может быть запущено. Пожалуйста, проверьте ошибки выше.")
+    st.warning("Приложение не может быть запущено. Убедитесь, что база данных создана, и проверьте ошибки выше.")
