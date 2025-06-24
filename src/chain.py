@@ -25,8 +25,8 @@ def create_final_rag_chain():
     llm = ChatOpenAI(model_name=config.MODEL_NAME, temperature=config.TEMPERATURE)
 
     # --- Ретривер с ре-ранкером ---
-    base_retriever = vector_store.as_retriever(search_kwargs={"k": 10})
-    compressor = FlashrankRerank(top_n=3)
+    base_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
+    compressor = FlashrankRerank(top_n=2)
     retriever = ContextualCompressionRetriever(
         base_retriever=base_retriever, 
         base_compressor=compressor
@@ -53,7 +53,7 @@ def create_final_rag_chain():
     # --- 3. Функция для форматирования истории чата в строку ---
     def format_chat_history(chat_history):
         return "\n".join(f'{msg["role"]}: {msg["content"]}' for msg in chat_history)
-
+    
     # --- 4. Собираем цепочку для генерации самостоятельного вопроса ---
     standalone_question_chain = (
         {
@@ -65,15 +65,18 @@ def create_final_rag_chain():
         | StrOutputParser()
     )
 
+    answer_chain = answer_prompt | llm | StrOutputParser()
+
     # --- 5. Собираем финальную цепочку ---
     final_chain = (
         {
-            "context": standalone_question_chain | retriever | format_docs,
+            "context": RunnableBranch(
+                (lambda x: x.get("chat_history"), standalone_question_chain), # ЕСЛИ история есть, ТО запустить переформулировку
+                itemgetter("question")                                        # ИНАЧЕ просто взять вопрос
+            ) | retriever | format_docs,
             "question": itemgetter("question")
         }
-        | answer_prompt
-        | llm
-        | StrOutputParser()
+        | answer_chain 
     )
 
     return final_chain, retriever
