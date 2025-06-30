@@ -24,18 +24,31 @@ def create_vector_store(chunks: List[Document]) -> Chroma:
     print("Векторная база данных успешно создана и сохранена.")
     return vector_store
 
-def load_vector_store() -> Chroma:
-    """
-    Загружает существующее векторное хранилище с диска.
 
-    :return: Объект базы данных Chroma.
+
+def load_vector_store(docs):
     """
-    embeddings_model = OpenAIEmbeddings(model=config.EMBEDDING_MODEL_NAME)
+    Создает или загружает векторную базу данных Chroma из предоставленных документов.
     
-    vector_store = Chroma(
-        persist_directory=config.CHROMA_DB_PATH,
-        embedding_function=embeddings_model
+    Args:
+        docs: Список документов для индексации.
+
+    Returns:
+        Объект векторной базы данных Chroma.
+    """
+    print("Создание векторной базы данных Chroma из документов...")
+    
+    # Создаем эмбеддинги
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    
+    # Создаем векторную базу из документов.
+    # Она будет сохранена на диск в папку, указанную в DB_PATH.
+    vector_store = Chroma.from_documents(
+        documents=docs,
+        embedding=embeddings,
+        persist_directory=config.CHROMA_DB_PATH
     )
     
-    print("Векторная база данных успешно загружена с диска.")
+    print("Векторная база данных успешно создана и сохранена.")
     return vector_store
+

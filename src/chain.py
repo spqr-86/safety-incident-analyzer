@@ -9,6 +9,7 @@ import config
 
 from langchain.retrievers.contextual_compression import ContextualCompressionRetriever
 from langchain_community.document_compressors.flashrank_rerank import FlashrankRerank
+from flashrank import Ranker
 from operator import itemgetter
 
 def format_docs(docs):
@@ -20,13 +21,21 @@ def create_final_rag_chain():
     Создает финальную RAG-цепочку с нуля с использованием LCEL для полного контроля.
     Эта версия исправляет ошибку TypeError.
     """
+
     # --- Загрузка базовых компонентов ---
     vector_store = load_vector_store()
     llm = ChatOpenAI(model_name=config.MODEL_NAME, temperature=config.TEMPERATURE)
 
+    # --- ШАГ 1: Создаем клиент FlashRank ---
+    # Эта строка сама позаботится о скачивании модели, если ее нет.
+    # Мы явно создаем объект Ranker, который будет выполнять всю работу.
+    print("Инициализация клиента FlashRank...")
+    flashrank_client = Ranker(model_name=config.RERANKING_MODEL, cache_dir=config.CACHE_DIR)
+    print("Клиент FlashRank готов.")
+
     # --- Ретривер с ре-ранкером ---
     base_retriever = vector_store.as_retriever(search_kwargs={"k": 7})
-    compressor = FlashrankRerank(top_n=2)
+    compressor = FlashrankRerank(client=flashrank_client, top_n=2)
     retriever = ContextualCompressionRetriever(
         base_retriever=base_retriever, 
         base_compressor=compressor
