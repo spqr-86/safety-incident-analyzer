@@ -10,8 +10,10 @@ from langsmith import Client
 # from src.hybrid_chain import create_hybrid_rag_chain
 # from src.sentence_window_chain import create_sentence_window_chain
 # from src.hyde_chain import create_hyde_rag_chain
-# from src.ultimate_chain import create_ultimate_rag_chain
 from src.final_chain import create_final_hybrid_chain
+from src.llm_factory import get_llm
+from src.custom_evaluators import check_correctness
+from src.ultimate_chain import create_ultimate_chain
 
 # Убираем предупреждения о параллелизме
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -34,8 +36,12 @@ def main():
     client = Client()
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
+    judge_llm = get_llm()
+
     # Просим LangSmith автоматически оценить каждый ответ по трем критериям.
     evaluation_config = RunEvalConfig(
+        custom_evaluators=[check_correctness],
+        # custom_evaluators=[check_correctness],
         evaluators=[
             # Судья №1: Проверяет ответ на корректность по сравнению с эталоном (Correctness)
             # Задает вопрос: "Совпадает ли ответ по смыслу с эталонным ответом из датасета?"
@@ -43,10 +49,8 @@ def main():
             # Судья №2: Проверяет ответ на галлюцинации (Faithfulness / Groundedness)
             # Задает вопрос: "Основан ли ответ строго на предоставленном контексте?"
             "context_qa",
-            # Судья №3: Оценивает смысловое соответствие эталону по числовой шкале (Correctness Score)
-            # Сравнивает ответ модели с эталонным (labeled) ответом и выставляет оценку (score) от 0 до 1.
-            "labeled_score_string",
-        ]
+        ],
+        eval_llm=judge_llm,
     )
 
     # final_chain_for_test, _ = create_final_rag_chain()
@@ -58,8 +62,11 @@ def main():
         # # "sentence_window_llamaindex": sentence_window_chain,
         # "hyde_advanced_rag": hyde_chain,
         # "ultimate_rag": create_ultimate_rag_chain(),
-        "final_rag": create_final_hybrid_chain()  # Новая ультимативная цепочка
+        # "final_hybrid_rag": create_final_hybrid_chain(),
+        "ultimate_rag": create_ultimate_chain(),
     }
+
+    print(f"В качестве LLM-судьи будет использоваться: {judge_llm.__class__.__name__}")
 
     print(
         f"Запускаем A/B тест для {len(candidate_chains)} моделей на датасете '{DATASET_NAME}'..."

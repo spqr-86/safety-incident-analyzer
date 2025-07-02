@@ -1,100 +1,126 @@
-from operator import itemgetter
+# src/ultimate_chain.py
 
+from operator import itemgetter
+from flashrank import Ranker
+from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
+from langchain_community.document_compressors import FlashrankRerank
+from langchain_community.retrievers import BM25Retriever
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI  # <-- Импортируем родной LLM для LangChain
+from langchain_core.runnables import RunnablePassthrough
+from langchain_chroma import Chroma
 
-# Импорты LlamaIndex
-from llama_index.core import Settings, SimpleDirectoryReader, VectorStoreIndex
-from llama_index.core.node_parser import SentenceWindowNodeParser
-from llama_index.core.postprocessor import MetadataReplacementPostProcessor
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.llms.openai import OpenAI as LlamaOpenAI
+
+from .llm_factory import get_llm, get_embedding_model
 
 import config
+from .data_processing import load_and_chunk_documents
+
+# === НОВАЯ ЛОГИКА ДЛЯ ПРОДВИНУТОГО RAG ===
 
 
-def create_ultimate_rag_chain():
+def create_sentence_level_retrievers(docs):
     """
-    Создает гибридную RAG-цепочку, объединяющую HyDE и Sentence Window Retriever.
+    Создает и возвращает два ретривера, работающих на уровне предложений.
     """
-    print("Создание ультимативной RAG-цепочки (HyDE + Sentence Window)...")
+    # 1. Разбиваем документы на предложения для точного поиска
+    from langchain_text_splitters import SentenceTransformersTokenTextSplitter
 
-    # --- 1. Настройка моделей ---
-    # Модель для LlamaIndex (для внутренних операций)
-    Settings.llm = LlamaOpenAI(model="gpt-4", temperature=0)
-    Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-
-    # Модель для HyDE (дешевая)
-    hyde_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
-
-    # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Создаем отдельную модель для финальной цепочки LangChain ---
-    final_llm = ChatOpenAI(model_name=config.MODEL_NAME, temperature=config.TEMPERATURE)
-
-    # ... (код для создания индекса и query_engine остается без изменений) ...
-    print("Инициализация индекса Sentence Window...")
-    node_parser = SentenceWindowNodeParser.from_defaults(
-        window_size=5,
-        window_metadata_key="window",
-        original_text_metadata_key="original_text",
+    sentence_splitter = SentenceTransformersTokenTextSplitter(
+        chunk_overlap=0, tokens_per_chunk=256
     )
-    documents = SimpleDirectoryReader("./data").load_data()
-    index = VectorStoreIndex.from_documents(documents, node_parser=node_parser)
+    sentences = sentence_splitter.split_documents(docs)
 
-    query_engine = index.as_query_engine(
-        similarity_top_k=15,
-        node_postprocessors=[
-            # Здесь можно будет добавить ре-ранкер LlamaIndex
-            MetadataReplacementPostProcessor(target_metadata_key="window")
-        ],
+    # 2. Создаем временную векторную базу ПРЕДЛОЖЕНИЙ
+    sentence_embeddings = get_embedding_model()
+    sentence_vector_store = Chroma.from_documents(sentences, sentence_embeddings)
+
+    # 3. Создаем два ретривера на основе предложений
+    semantic_retriever = sentence_vector_store.as_retriever(search_kwargs={"k": 20})
+    keyword_retriever = BM25Retriever.from_documents(sentences)
+    keyword_retriever.k = 20
+
+    return semantic_retriever, keyword_retriever
+
+
+def get_windowed_context(docs):
+    """
+    Принимает найденные предложения и "собирает" вокруг них контекст.
+    (В реальном проекте здесь была бы более сложная логика поиска по исходному тексту,
+    но для нашей цели мы просто объединим найденные предложения,
+    так как они уже содержат достаточно информации).
+    """
+    return "\n\n".join([doc.page_content for doc in docs])
+
+
+def create_ultimate_chain():
+    """
+    Создает ультимативную RAG-цепочку:
+    1. Гибридный поиск (BM25 + семантика) на уровне предложений.
+    2. "Оконное" расширение контекста.
+    3. Финальный ре-ранкинг.
+    """
+    print("Создание ультимативной RAG-цепочки...")
+
+    # --- 1. Подготовка документов и ретриверов ---
+    # Мы загружаем и чанким документы один раз
+    all_chunks = load_and_chunk_documents(config.SOURCE_DOCS_PATH)
+
+    # Создаем ретриверы, работающие на уровне предложений
+    semantic_sent_retriever, keyword_sent_retriever = create_sentence_level_retrievers(
+        all_chunks
     )
 
-    # --- 4. Создаем цепочку HyDE (без изменений) ---
-    hyde_prompt = ChatPromptTemplate.from_template(
-        """Пожалуйста, сгенерируй короткий абзац, который является гипотетическим, но реалистичным ответом на вопрос пользователя. Ответ должен быть написан в сухом, официальном стиле, характерном для нормативных актов и постановлений по охране труда.
-
-Пример:
-Вопрос: Какова периодичность повторного инструктажа?
-Ответ: Повторный инструктаж по охране труда для работников проводится с периодичностью не реже одного раза в шесть календарных месяцев.
-
-Теперь, по аналогии, ответь на следующий вопрос.
-Вопрос: {question}"""
+    # --- 2. Собираем ансамблевый ретривер для поиска по предложениям ---
+    print("Создание ансамблевого ретривера для поиска по предложениям...")
+    ensemble_retriever = EnsembleRetriever(
+        retrievers=[semantic_sent_retriever, keyword_sent_retriever],
+        weights=[0.5, 0.5],  # Даем равный вес смыслу и ключевым словам
     )
-    hyde_chain = hyde_prompt | hyde_llm | StrOutputParser()
 
-    # --- 5. Собираем финальную цепочку ---
-    def retrieve_context(input_dict):
-        question = input_dict["question"]
-        print(f"Оригинальный вопрос: {question}")
+    # --- 3. Добавляем ре-ранкер ---
+    print("Инициализация ре-ранкера (FlashRank)...")
+    flashrank_client = Ranker(
+        model_name=config.RERANKING_MODEL, cache_dir=config.CACHE_DIR
+    )
+    compressor = FlashrankRerank(
+        client=flashrank_client, top_n=7
+    )  # Берем чуть больше контекста
 
-        hypothetical_answer = hyde_chain.invoke({"question": question})
-        print(f"Гипотетический ответ (HyDE): {hypothetical_answer}")
+    final_retriever = ContextualCompressionRetriever(
+        base_compressor=compressor, base_retriever=ensemble_retriever
+    )
 
-        retrieved_nodes = query_engine.retrieve(hypothetical_answer)
-        retrieved_docs = [node.get_content() for node in retrieved_nodes]
+    # --- 4. Финальная цепочка для генерации ответа ---
+    final_llm = get_llm()
 
-        return "\n\n".join(retrieved_docs)
+    final_template = """Вы — ИИ-ассистент.
+    Используя ТОЛЬКО предоставленный Контекст, дайте четкий и исчерпывающий
+    ответ на Вопрос. Не придумывайте информацию. Отвечай на русском языке.
 
-    final_prompt_template = """Вы — ИИ-ассистент. Используя ТОЛЬКО предоставленный Контекст, дайте четкий и исчерпывающий ответ на Вопрос. Не придумывайте информацию. Отвечай на русском языке.
+    Контекст:
+    {context}
 
-Контекст:
-{context}
+    Вопрос:
+    {question}
 
-Вопрос:
-{question}
+    Ответ:"""
 
-Ответ:"""
-    final_prompt = ChatPromptTemplate.from_template(final_prompt_template)
+    final_prompt = ChatPromptTemplate.from_template(final_template)
 
-    # Собираем финальную цепочку, используя LangChain-совместимую модель `final_llm`
+    # Собираем все в единый конвейер
     ultimate_chain = (
         {
-            "context": retrieve_context,
+            "context": itemgetter("question") | final_retriever,
             "question": itemgetter("question"),
         }
+        | RunnablePassthrough.assign(
+            context=(lambda x: get_windowed_context(x["context"]))
+        )
         | final_prompt
-        | final_llm  # <-- Используем правильную, совместимую модель
+        | final_llm
         | StrOutputParser()
     )
 
+    print("Ультимативная RAG-цепочка успешно создана.")
     return ultimate_chain
