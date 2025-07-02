@@ -1,0 +1,10 @@
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W"]  # Проверять на ошибки (E), фатальные ошибки (F) и предупреждения (W)
+ignore = ["E501"]  # Игнорировать ошибку "строка слишком длинная", так как Black сам этим управляет
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"] # Указываем, что 'src' - это папка нашего проекта

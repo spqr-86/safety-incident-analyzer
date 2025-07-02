@@ -1,6 +1,5 @@
-import os
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
 from dotenv import load_dotenv
+from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
 
 load_dotenv()
 
