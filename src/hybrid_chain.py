@@ -1,21 +1,21 @@
 import os
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
-from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
 from operator import itemgetter
 
-from llama_index.core import (
-    VectorStoreIndex, 
-    SimpleDirectoryReader, 
-    StorageContext, 
-    load_index_from_storage
-)
+from dotenv import load_dotenv
 from langchain_community.retrievers import LlamaIndexRetriever
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from llama_index.core import (
+    SimpleDirectoryReader,
+    StorageContext,
+    VectorStoreIndex,
+    load_index_from_storage,
+)
 
 # Укажем место для хранения индекса LlamaIndex
 PERSIST_DIR = "./storage_llamaindex"
+
 
 def get_llama_index():
     """
@@ -34,18 +34,19 @@ def get_llama_index():
         storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
         index = load_index_from_storage(storage_context)
         print("Индекс успешно загружен.")
-    
+
     return index
+
 
 def create_hybrid_rag_chain():
     """
     Создает и возвращает гибридную RAG-цепочку LangChain + LlamaIndex.
     """
     load_dotenv()
-    
+
     # Получаем готовый индекс (созданный или загруженный)
     index = get_llama_index()
-    
+
     # Остальная часть не меняется
     query_engine = index.as_query_engine(similarity_top_k=3)
     retriever = LlamaIndexRetriever(index=query_engine)
@@ -61,7 +62,7 @@ def create_hybrid_rag_chain():
     Вопрос: {question}
 
     Полезный ответ:"""
-    
+
     prompt = ChatPromptTemplate.from_template(template)
     model = ChatOpenAI(model="gpt-4", temperature=0)
 

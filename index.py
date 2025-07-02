@@ -1,6 +1,8 @@
 import os
-import config
+
 from dotenv import load_dotenv
+
+import config
 from src.data_processing import load_and_chunk_documents
 from src.vector_store import create_vector_store
 
@@ -13,16 +15,18 @@ def main():
     Сканирует папку с документами, обрабатывает их и создает векторную базу.
     """
     print("Запуск процесса индексации...")
-    
+
     # Собираем пути ко всем PDF файлам в исходной папке
     pdf_files = [f for f in os.listdir(config.SOURCE_DOCS_PATH) if f.endswith(".pdf")]
-    
+
     if not pdf_files:
-        print(f"Не найдены PDF файлы в папке '{config.SOURCE_DOCS_PATH}'. Индексация прервана.")
+        print(
+            f"Не найдены PDF файлы в папке '{config.SOURCE_DOCS_PATH}'. Индексация прервана."
+        )
         return
 
     print(f"Найдено {len(pdf_files)} документов для индексации.")
-    
+
     # Обрабатываем каждый документ и собираем все чанки в один список
     all_chunks = []
     for doc_name in pdf_files:
@@ -39,5 +43,6 @@ def main():
     else:
         print("Не удалось создать чанки для индексации. Проверьте ваши документы.")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
