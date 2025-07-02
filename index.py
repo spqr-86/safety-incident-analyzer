@@ -1,4 +1,5 @@
 import os
+import shutil
 
 from dotenv import load_dotenv
 
@@ -16,24 +17,12 @@ def main():
     """
     print("Запуск процесса индексации...")
 
-    # Собираем пути ко всем PDF файлам в исходной папке
-    pdf_files = [f for f in os.listdir(config.SOURCE_DOCS_PATH) if f.endswith(".pdf")]
+    # Удаляем старую базу данных ТОЛЬКО для текущего провайдера
+    if os.path.exists(config.CHROMA_DB_PATH):
+        print(f"Удаление старой базы данных из: {config.CHROMA_DB_PATH}...")
+        shutil.rmtree(config.CHROMA_DB_PATH)
 
-    if not pdf_files:
-        print(
-            f"Не найдены PDF файлы в папке '{config.SOURCE_DOCS_PATH}'. Индексация прервана."
-        )
-        return
-
-    print(f"Найдено {len(pdf_files)} документов для индексации.")
-
-    # Обрабатываем каждый документ и собираем все чанки в один список
-    all_chunks = []
-    for doc_name in pdf_files:
-        doc_path = os.path.join(config.SOURCE_DOCS_PATH, doc_name)
-        chunks = load_and_chunk_documents(doc_path)
-        if chunks:
-            all_chunks.extend(chunks)
+    all_chunks = load_and_chunk_documents(config.SOURCE_DOCS_PATH)
 
     # Если чанки были успешно созданы, создаем векторную базу
     if all_chunks:

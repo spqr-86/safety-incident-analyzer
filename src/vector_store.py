@@ -1,8 +1,9 @@
 from typing import List
-
-from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_openai import OpenAIEmbeddings
+from langchain_chroma import Chroma
+
+
+from .llm_factory import get_embedding_model
 
 import config
 
@@ -10,11 +11,13 @@ import config
 def create_vector_store(chunks: List[Document]) -> Chroma:
     """
     Создает векторное хранилище из списка чанков и сохраняет его на диск.
+    Эта функция должна вызываться только скриптом index.py.
 
     :param chunks: Список чанков для добавления в базу.
     :return: Объект базы данных Chroma.
     """
-    embeddings_model = OpenAIEmbeddings(model=config.EMBEDDING_MODEL_NAME)
+    print("Создание новой векторной базы данных...")
+    embeddings_model = get_embedding_model()
 
     vector_store = Chroma.from_documents(
         documents=chunks,
@@ -22,30 +25,23 @@ def create_vector_store(chunks: List[Document]) -> Chroma:
         persist_directory=config.CHROMA_DB_PATH,
     )
 
-    print("Векторная база данных успешно создана и сохранена.")
+    print(
+        f"Векторная база данных успешно создана и сохранена в: {config.CHROMA_DB_PATH}"
+    )
     return vector_store
 
 
-def load_vector_store(docs):
+def load_vector_store() -> Chroma:
     """
-    Создает или загружает векторную базу данных Chroma из предоставленных документов.
+    Загружает существующее векторное хранилище с диска.
 
-    Args:
-        docs: Список документов для индексации.
-
-    Returns:
-        Объект векторной базы данных Chroma.
+    :return: Объект базы данных Chroma.
     """
-    print("Создание векторной базы данных Chroma из документов...")
+    print(f"Загрузка существующей векторной базы из: {config.CHROMA_DB_PATH}")
+    embeddings_model = get_embedding_model()
 
-    # Создаем эмбеддинги
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-    # Создаем векторную базу из документов.
-    # Она будет сохранена на диск в папку, указанную в DB_PATH.
-    vector_store = Chroma.from_documents(
-        documents=docs, embedding=embeddings, persist_directory=config.CHROMA_DB_PATH
+    vector_store = Chroma(
+        persist_directory=config.CHROMA_DB_PATH,
+        embedding_function=embeddings_model,
     )
-
-    print("Векторная база данных успешно создана и сохранена.")
     return vector_store
