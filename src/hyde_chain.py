@@ -26,7 +26,7 @@ def create_hyde_rag_chain():
     final_llm = ChatOpenAI(model_name=config.MODEL_NAME, temperature=config.TEMPERATURE)
     hyde_llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
 
-    # 2. Цепочка для генерации гипотетического ответа (СОВРЕМЕННЫЙ СИНТАКСИС)
+    # 2. Цепочка для генерации гипотетического ответа
     hyde_prompt = ChatPromptTemplate.from_template(
         "Напиши короткий, гипотетический ответ на следующий вопрос, как если "
         "бы он был взят из официального документа по охране труда: {question}"

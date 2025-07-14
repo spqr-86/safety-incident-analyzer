@@ -1,5 +1,3 @@
-# src/ultimate_chain.py
-
 from operator import itemgetter
 from flashrank import Ranker
 from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
@@ -15,8 +13,6 @@ from .llm_factory import get_llm, get_embedding_model
 
 import config
 from .data_processing import load_and_chunk_documents
-
-# === НОВАЯ ЛОГИКА ДЛЯ ПРОДВИНУТОГО RAG ===
 
 
 def create_sentence_level_retrievers(docs):

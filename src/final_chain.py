@@ -12,7 +12,6 @@ from langchain_core.documents import Document
 import config
 
 from .vector_store import load_vector_store
-
 from .llm_factory import get_llm
 
 

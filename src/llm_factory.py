@@ -26,7 +26,6 @@ def get_llm():
         return GigaChat(
             credentials=credentials, verify_ssl_certs=False, scope="GIGACHAT_API_PERS"
         )
-
     else:
         raise ValueError(
             f"Неизвестный провайдер LLM: {provider}. Доступные варианты: 'openai', 'gigachat'"
@@ -36,7 +35,7 @@ def get_llm():
 def get_embedding_model():
     """
     Фабричная функция для создания объекта модели эмбеддингов.
-    Выбор модели теперь напрямую зависит от LLM_PROVIDER.
+    Выбор модели напрямую зависит от LLM_PROVIDER.
     """
     provider = config.LLM_PROVIDER.lower()
 
