@@ -7,8 +7,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- 1. Получение Access Token ---
-
-# Получаем ваши авторизационные данные из .env файла
 credentials = os.getenv("GIGACHAT_CREDENTIALS")
 
 if not credentials:
@@ -49,7 +47,6 @@ except Exception as e:
 
 
 # --- 2. Запрос к GigaChat API с полученным токеном ---
-
 if access_token:
     try:
         print("\nШаг 2: Пытаюсь получить список моделей с помощью токена...")
