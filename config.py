@@ -16,5 +16,5 @@ CHROMA_DB_PATH = (
 SOURCE_DOCS_PATH = "data"  # Папка с исходными PDF-документами
 
 
-RERANKING_MODEL = "ms-marco-MultiBERT-L-12"
+RERANKING_MODEL = "ms-marco-MiniLM-L-12-v2"
 CACHE_DIR = "/tmp/flashrank_cache"
