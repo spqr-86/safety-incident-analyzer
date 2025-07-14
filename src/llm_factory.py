@@ -1,5 +1,3 @@
-# src/llm_factory.py
-
 import os
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_gigachat import GigaChat
