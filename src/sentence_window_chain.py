@@ -24,12 +24,11 @@ def create_sentence_window_chain():
     print("Создание продвинутой RAG-цепочки (Sentence Window LlamaIndex)...")
 
     # 1. Настройка глобальных параметров через Settings
-    # Это новый, правильный способ.
     print("Настройка LLM и модели эмбеддингов...")
     Settings.llm = LlamaOpenAI(model="gpt-4", temperature=0)
     Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
-    # 2. Создаем "оконный" парсер (этот код не меняется)
+    # 2. Создаем "оконный" парсер
     node_parser = SentenceWindowNodeParser.from_defaults(
         window_size=3,
         window_metadata_key="window",
@@ -37,14 +36,14 @@ def create_sentence_window_chain():
     )
 
     # 3. Загружаем документы и строим индекс.
-    # Он автоматически подхватит наши глобальные Settings.
+    # Он автоматически подхватит глобальные Settings.
     print("Создание/загрузка индекса LlamaIndex...")
     documents = SimpleDirectoryReader("./data").load_data()
     index = VectorStoreIndex.from_documents(documents, node_parser=node_parser)
 
     print("Индекс создан.")
 
-    # 4. Создаем движок запросов (этот код не меняется)
+    # 4. Создаем движок запросов
     query_engine = index.as_query_engine(
         similarity_top_k=5,
         node_postprocessors=[
@@ -52,7 +51,7 @@ def create_sentence_window_chain():
         ],
     )
 
-    # 5. Интегрируем движок в LangChain Runnable (этот код не меняется)
+    # 5. Интегрируем движок в LangChain Runnable
     def query_engine_func(input_dict):
         return query_engine.query(input_dict["question"])
 

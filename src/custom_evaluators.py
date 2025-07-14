@@ -6,7 +6,7 @@ from .llm_factory import get_llm
 
 def check_correctness(run, example):
     """
-    Финальная, надежная версия кастомного оценщика для проверки корректности.
+    Оценщика для проверки корректности.
     """
     print("--- Запуск финального оценщика ---")
 
@@ -60,7 +60,7 @@ def check_correctness(run, example):
         }
     )
 
-    # 5. Парсим результат (этот код не меняется)
+    # 5. Парсим результат
     try:
         result = json.loads(response_str)
         print(
