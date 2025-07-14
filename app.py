@@ -1,5 +1,6 @@
 import os
 import sys
+from dotenv import load_dotenv
 
 import streamlit as st
 
@@ -10,7 +11,9 @@ if os.path.exists("/home/adminuser/venv/bin/python"):
 # -----------------------------------------
 
 import config
-from src.chain import create_final_rag_chain  # <-- Изменили импорт!
+from src.final_chain import create_final_hybrid_chain
+
+load_dotenv()
 
 # --- Конфигурация страницы ---
 st.set_page_config(
@@ -18,6 +21,7 @@ st.set_page_config(
 )
 st.title("🤖 AI Safety Compliance Assistant")
 st.caption(f"Ваш ИИ-помощник по нормативной документации. Модель: {config.MODEL_NAME}")
+
 
 
 # --- Загрузка и кеширование ресурсов ---
@@ -29,7 +33,7 @@ def load_resources():
         st.error("База данных не найдена. Запустите 'python index.py' для ее создания.")
         return None, None
     try:
-        chain, retriever = create_final_rag_chain()
+        chain, retriever = create_final_hybrid_chain()
         return chain, retriever
     except Exception as e:
         st.error(f"Произошла ошибка при загрузке ресурсов: {e}")
@@ -58,13 +62,12 @@ if rag_chain and retriever:
             st.markdown(user_query)
 
         with st.chat_message("assistant"):
-            # --- ИСПОЛЬЗУЕМ НОВУЮ, НАДЕЖНУЮ ЛОГИКУ ---
             try:
                 retrieved_docs = retriever.invoke(user_query)
             except Exception:
                 retrieved_docs = []
 
-            # Настоящий стриминг с помощью st.write_stream
+            # стриминг с помощью st.write_stream
             response = st.write_stream(
                 rag_chain.stream(
                     {
@@ -78,8 +81,7 @@ if rag_chain and retriever:
             if retrieved_docs:
                 with st.expander("Показать источники"):
                     for doc in retrieved_docs:
-                        # ... (код для отображения источников остается таким же)
-                        st.text(doc.page_content)  # Упрощенный вывод
+                        st.text(doc.page_content)
                         st.caption(f"Источник: {doc.metadata.get('source', 'N/A')}")
                         st.divider()
 

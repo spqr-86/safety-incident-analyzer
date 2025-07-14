@@ -99,4 +99,4 @@ def create_final_hybrid_chain():
     )
 
     print("Финальная гибридная цепочка успешно создана.")
-    return final_chain
+    return final_chain, final_retriever
