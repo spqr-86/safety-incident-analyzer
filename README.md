@@ -95,7 +95,7 @@ flowchart LR
         B --> C[Split: Markdown headers → Recursive]
         C --> D[Дедупликация чанков]
         D --> E[Эмбеддинги]
-        E --> F[ChromaDB (persist)]
+        E --> F[ChromaDB persist]
     end
 
     subgraph Retrieval[Извлечение]
