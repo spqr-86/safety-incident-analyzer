@@ -1,43 +1,53 @@
+# index.py
 import os
-import config
+import shutil
+
 from dotenv import load_dotenv
-from src.data_processing import load_and_chunk_documents
+
+from config.settings import settings
+from src.file_handler import DocumentProcessor
 from src.vector_store import create_vector_store
+from utils.logging import logger
 
 load_dotenv()
 
 
+def _collect_paths(root_dir: str, allowed_exts: list[str]) -> list[str]:
+    paths = []
+    for dirpath, _, filenames in os.walk(root_dir):
+        for name in filenames:
+            ext = os.path.splitext(name)[1].lower()
+            if ext in allowed_exts:
+                paths.append(os.path.join(dirpath, name))
+    return paths
+
+
 def main():
-    """
-    Основная функция для запуска процесса индексации.
-    Сканирует папку с документами, обрабатывает их и создает векторную базу.
-    """
-    print("Запуск процесса индексации...")
-    
-    # Собираем пути ко всем PDF файлам в исходной папке
-    pdf_files = [f for f in os.listdir(config.SOURCE_DOCS_PATH) if f.endswith(".pdf")]
-    
-    if not pdf_files:
-        print(f"Не найдены PDF файлы в папке '{config.SOURCE_DOCS_PATH}'. Индексация прервана.")
+    logger.info("Запуск процесса индексации...")
+
+    if os.path.exists(settings.CHROMA_DB_PATH):
+        logger.info(f"Удаление старой базы данных из: {settings.CHROMA_DB_PATH}...")
+        shutil.rmtree(settings.CHROMA_DB_PATH, ignore_errors=True)
+
+    # Собираем все файлы допустимых типов
+    file_paths = _collect_paths(settings.SOURCE_DOCS_PATH, settings.ALLOWED_TYPES)
+    if not file_paths:
+        logger.warning(
+            f"В папке {settings.SOURCE_DOCS_PATH} не найдено подходящих файлов."
+        )
         return
 
-    print(f"Найдено {len(pdf_files)} документов для индексации.")
-    
-    # Обрабатываем каждый документ и собираем все чанки в один список
-    all_chunks = []
-    for doc_name in pdf_files:
-        doc_path = os.path.join(config.SOURCE_DOCS_PATH, doc_name)
-        chunks = load_and_chunk_documents(doc_path)
-        if chunks:
-            all_chunks.extend(chunks)
+    # Обработка через новый DocumentProcessor
+    processor = DocumentProcessor()
+    chunks = processor.process(file_paths)
 
-    # Если чанки были успешно созданы, создаем векторную базу
-    if all_chunks:
-        print(f"Всего будет проиндексировано {len(all_chunks)} чанков.")
-        create_vector_store(all_chunks)
-        print("Индексация успешно завершена.")
+    if chunks:
+        logger.info(f"Всего будет проиндексировано {len(chunks)} чанков.")
+        create_vector_store(chunks)  # твоя функция сохраняет в Chroma
+        logger.info("Индексация успешно завершена.")
     else:
-        print("Не удалось создать чанки для индексации. Проверьте ваши документы.")
+        logger.warning("Чанки не получены. Проверьте документы/конвертацию.")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
