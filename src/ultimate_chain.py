@@ -1,18 +1,18 @@
 from operator import itemgetter
+
 from flashrank import Ranker
 from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
+from langchain_chroma import Chroma
 from langchain_community.document_compressors import FlashrankRerank
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-from langchain_chroma import Chroma
-
-
-from .llm_factory import get_llm, get_embedding_model
 
 import config
+
 from .data_processing import load_and_chunk_documents
+from .llm_factory import get_embedding_model, get_llm
 
 
 def create_sentence_level_retrievers(docs):
