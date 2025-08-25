@@ -15,7 +15,7 @@ AI Safety Compliance Assistant — это умная система для ра�
 
 **Попробовать работающее приложение можно здесь:**
 
-**[➡️ https://safety-incident-analyzer-hzdph3pczddb6pilmjtlzo.streamlit.app/] ⬅️**
+**[➡️ https://safety-incident-analyzer-sefffd3s4bnafeezqfpmv7.streamlit.app/] ⬅️**
 
 ![Скриншот приложения](assets/screenshot.png)
 
