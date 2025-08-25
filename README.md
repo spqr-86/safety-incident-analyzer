@@ -71,13 +71,14 @@ streamlit run app.py
 
 Приложение будет доступно по адресу: `http://localhost:8501`
 
-## 🏗️ Архитектура системы
+## 🧭 Архитектура (RAG + MAS)
 
+```mermaid
 flowchart LR
     subgraph Ingestion[Индексация / Предобработка]
-        A[Документы: СНиП, ГОСТ, СП, внутренние регламенты] --> B[Docling / конвертация → Markdown]
+        A[Документы: СНиП, ГОСТ, СП, внутренние регламенты] --> B[Docling → Markdown]
         B --> C[Чанкинг (chunk_size, overlap)]
-        C --> D[Эмбеддинги (OpenAI / HF API / Nomic / Local)]
+        C --> D[Эмбеддинги (API/Local)]
         C --> E[BM25 индекс]
         D --> F[ChromaDB (persist)]
         E --> H[(BM25)]
@@ -85,8 +86,8 @@ flowchart LR
 
     subgraph App[Приложение (Streamlit)]
         Q[Вопрос пользователя] --> R[Гибридный ретривер]
-        R -->|k, weights| R1[Векторный поиск (Chroma)]
-        R -->|k, weights| R2[BM25]
+        R -->|weights,k| R1[Векторный поиск (Chroma)]
+        R -->|weights,k| R2[BM25]
         R1 --> RR[FlashRank Re-Ranker]
         R2 --> RR
         RR --> P[Топ-фрагменты (контекст)]
@@ -96,10 +97,9 @@ flowchart LR
         P --> RC[RelevanceChecker]
         RC -->|релевантно| RS[ResearchAgent (LLM)]
         RC -->|не релевантно| X[[Корректный отказ]]
-
         RS --> V[VerificationAgent (LLM-as-Judge)]
-        V -->|Supported/Relevant = NO| L{{Decision Layer}}
-        L -->|повторить| RS
+        V -->|NO| L{{Decision Layer}}
+        L -->|повтор| RS
         V -->|OK| OUT[Финальный ответ + ссылки]
     end
 
@@ -107,46 +107,68 @@ flowchart LR
     X --> U
 
 
-### Основные компоненты:
+### Последовательность обработки запроса:
 
-1. **Document Processing** (`src/data_processing.py`)
-   - Загрузка PDF документов
-   - Разбиение на семантические чанки
-   - Сохранение метаданных
+sequenceDiagram
+    participant User as Пользователь
+    participant UI as Streamlit UI
+    participant Ret as Гибридный ретривер
+    participant Rerank as FlashRank
+    participant MAS as LangGraph (MAS)
+    participant R as ResearchAgent
+    participant V as VerificationAgent
+    participant DB as Chroma + BM25
 
-2. **Vector Store** (`src/vector_store.py`)
-   - Создание и управление ChromaDB
-   - Эмбеддинги через OpenAI API
-   - Персистентное хранение
+    User->>UI: Вопрос
+    UI->>Ret: invoke(question)
+    Ret->>DB: семантический + BM25
+    DB-->>Ret: кандидаты (фрагменты)
+    Ret->>Rerank: rerank(candidates)
+    Rerank-->>UI: top-k фрагментов
 
-3. **RAG Chain** (`src/chain.py`)
-   - Contextual Compression с FlashRank
-   - Управление историей диалога
-   - Генерация самостоятельных вопросов
+    UI->>MAS: start(state: question, docs)
+    MAS->>MAS: RelevanceChecker
+    alt Релевантно
+        MAS->>R: generate(docs)
+        R-->>MAS: draft_answer
+        MAS->>V: check(draft_answer, docs)
+        V-->>MAS: verification_report
+        alt Не подтверждено
+            MAS->>R: refine & regenerate
+            R-->>MAS: new_draft
+            MAS->>V: re-check
+        end
+        MAS-->>UI: финальный ответ + отчёт
+    else Не релевантно
+        MAS-->>UI: корректный отказ
+    end
 
-4. **Web Interface** (`app.py`)
-   - Streamlit интерфейс
-   - Стриминг ответов
-   - Отображение источников
+    UI-->>User: Ответ + Источники + Верификация
+
 
 ## 📁 Структура проекта
 
 ```
 safety-incident-analyzer/
-├── src/                           # Основная логика
-│   ├── __init__.py
-│   ├── data_processing.py         # Обработка документов
-│   ├── vector_store.py            # Управление векторной БД
-│   └── chain.py                   # RAG цепочка
-├── notebooks/                     # Jupyter ноутбуки для экспериментов
-│   └── 01-Document-Loading.ipynb
-├── data/                          # Исходные документы (PDF)
-├── chroma_db/                     # Векторная база данных
-├── app.py                         # Streamlit приложение
-├── index.py                       # Скрипт индексации
-├── config.py                      # Конфигурация
-├── requirements.txt               # Зависимости
-├── .env.example                   # Пример переменных окружения
+├── app.py                      # Streamlit UI (RAG-режим + MAS-режим)
+├── index.py                    # Индексация документов в Chroma
+├── requirements.txt
+├── .env.example
+├── config/
+│   ├── constants.py
+│   └── settings.py
+├── src/
+│   ├── file_handler.py         # Docling → Markdown → Split → Cache/Dedupe
+│   ├── vector_store.py         # Chroma + embeddings + совместимость
+│   ├── llm_factory.py          # LLM/Embeddings провайдеры (OpenAI/GigaChat/Local)
+│   ├── final_chain.py          # Гибридный retriever + FlashRank + prompt
+│   ├── agents/
+│   │   ├── workflow.py         # LangGraph: Relevance→Research→Verification
+│   │   ├── relevance_checker.py
+│   │   ├── research_agent.py
+│   │   └── verification_agent.py
+│   └── retriever/
+│       └── builder.py          # BM25 + Chroma + Ensemble
 └── README.md
 ```
 
