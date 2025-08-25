@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 from langchain.smith import RunEvalConfig
 from langsmith import Client
 
+from src.custom_evaluators import check_correctness
+
 # --- Импортируем цепочки кандидаты ---
 # from src.chain import create_final_rag_chain
 # from src.hybrid_chain import create_hybrid_rag_chain
@@ -12,7 +14,6 @@ from langsmith import Client
 # from src.hyde_chain import create_hyde_rag_chain
 from src.final_chain import create_final_hybrid_chain
 from src.llm_factory import get_llm
-from src.custom_evaluators import check_correctness
 from src.ultimate_chain import create_ultimate_chain
 
 # Убираем предупреждения о параллелизме

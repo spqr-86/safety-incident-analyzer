@@ -1,6 +1,7 @@
 import os
-import requests
 import uuid
+
+import requests
 from dotenv import load_dotenv
 
 # Загружаем переменные из .env файла
