@@ -139,3 +139,4 @@ docling
 loguru
 langgraph
 pysqlite3-binary
+rank_bm25
