@@ -71,27 +71,39 @@ streamlit run app.py
 
 ## 🏗️ Архитектура системы
 
-```mermaid
-graph TB
-    A[PDF Документы] --> B[PyPDFLoader]
-    B --> C[RecursiveCharacterTextSplitter]
-    C --> D[Text Chunks]
-    D --> E[OpenAI Embeddings]
-    E --> F[ChromaDB Vector Store]
-    
-    G[User Query] --> H[Standalone Question Chain]
-    H --> I[Contextual Compression Retriever]
-    I --> F
-    F --> J[FlashRank Reranker]
-    J --> K[Context Formation]
-    K --> L[GPT-4o-mini]
-    L --> M[Response]
-    
-    N[Chat History] --> H
-    I --> O[Retrieved Documents]
-    O --> P[Streamlit UI]
-    M --> P
-```
+flowchart LR
+    subgraph Ingestion[Индексация / Предобработка]
+        A[Документы: СНиП, ГОСТ, СП, внутренние регламенты] --> B[Docling / конвертация → Markdown]
+        B --> C[Чанкинг (chunk_size, overlap)]
+        C --> D[Эмбеддинги (OpenAI / HF API / Nomic / Local)]
+        C --> E[BM25 индекс]
+        D --> F[ChromaDB (persist)]
+        E --> H[(BM25)]
+    end
+
+    subgraph App[Приложение (Streamlit)]
+        Q[Вопрос пользователя] --> R[Гибридный ретривер]
+        R -->|k, weights| R1[Векторный поиск (Chroma)]
+        R -->|k, weights| R2[BM25]
+        R1 --> RR[FlashRank Re-Ranker]
+        R2 --> RR
+        RR --> P[Топ-фрагменты (контекст)]
+    end
+
+    subgraph MAS[MAS Workflow (LangGraph)]
+        P --> RC[RelevanceChecker]
+        RC -->|релевантно| RS[ResearchAgent (LLM)]
+        RC -->|не релевантно| X[[Корректный отказ]]
+
+        RS --> V[VerificationAgent (LLM-as-Judge)]
+        V -->|Supported/Relevant = NO| L{{Decision Layer}}
+        L -->|повторить| RS
+        V -->|OK| OUT[Финальный ответ + ссылки]
+    end
+
+    OUT --> U[(UI: Ответ + Источники + Отчёт верификации)]
+    X --> U
+
 
 ### Основные компоненты:
 
