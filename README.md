@@ -165,6 +165,55 @@ safety-incident-analyzer/
 - Docling (конвертация PDF/DOCX → Markdown)
 - FlashRank (rerank top-k фрагментов)
 
+## 📊 Evaluation и метрики
+
+Система включает comprehensive evaluation framework для оценки качества RAG:
+
+### Метрики
+
+**Retrieval Quality:**
+- Hit Rate @ K, MRR, NDCG, Precision, Recall
+
+**Generation Quality:**
+- Correctness (0-10) - соответствие эталону
+- Faithfulness (0-1) - детектор галлюцинаций
+- Answer Relevance (0-1) - релевантность ответа
+- Citation Quality - корректность цитат
+
+### Быстрый старт
+
+```bash
+# Запустить baseline оценку (5 вопросов)
+python eval/run_full_evaluation.py --limit 5
+
+# Полная оценка
+python eval/run_full_evaluation.py
+
+# Сравнение с baseline
+python scripts/compare_with_baseline.py
+
+# A/B тестирование с LangSmith
+python run_ab_test.py
+```
+
+### Документация
+
+- 📖 [Полный план развития eval](./DEVELOPMENT_PLAN.md)
+- 🚀 [Quick Start Guide](./QUICK_START.md)
+- 📚 [Примеры использования](./eval/EXAMPLES.md)
+- 📊 [Benchmarks README](./benchmarks/README.md)
+
+### CI/CD
+
+GitHub Actions автоматически запускает eval при:
+- Push в main/develop ветки
+- Pull requests
+- Еженедельно (drift detection)
+
+См. `.github/workflows/evaluation.yml`
+
+---
+
 ## 🔎 Примечания и устранение неполадок
 
 - При проблеме с SQLite (облако) в `app.py` есть автоматический фикc с `pysqlite3`.
