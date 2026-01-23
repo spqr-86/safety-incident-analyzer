@@ -187,8 +187,6 @@ Dataset обновлен с учетом последних изменений �
 - `scripts/parse_perplexity_dataset.py`: новый парсер
 - `perplexity_golden_dataset.md`: исходный dataset
 
-**Branch**: `claude/project-development-plan-Wf6gO`
-
 ---
 
 ## 🎓 Резюме для описания проекта
@@ -226,6 +224,5 @@ Citation Rate на контрольном датасете.
 
 ---
 
-**Автор**: Claude (AI Safety Compliance Assistant)
 **Дата**: 23.01.2026
 **Статус**: ✅ Готово к evaluation
