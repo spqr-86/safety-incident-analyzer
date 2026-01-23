@@ -73,8 +73,22 @@ jobs:
           echo "✅ Dataset found"
           wc -l tests/dataset.csv
 
+      - name: 🔑 Check API keys
+        id: check_keys
+        run: |
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ] && [ -z "${{ secrets.GIGACHAT_CREDENTIALS }}" ]; then
+            echo "⚠️ No API keys configured in GitHub Secrets"
+            echo "⚠️ Skipping evaluation (configure OPENAI_API_KEY or GIGACHAT_CREDENTIALS)"
+            echo "has_keys=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ API keys found"
+            echo "has_keys=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: 📊 Run evaluation
         id: eval
+        if: steps.check_keys.outputs.has_keys == 'true'
+        continue-on-error: true
         env:
           GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -107,7 +121,7 @@ jobs:
 
       - name: 📈 Compare with baseline
         id: compare
-        if: always()
+        if: always() && steps.check_keys.outputs.has_keys == 'true'
         run: |
           if [ -f "benchmarks/baseline.json" ] && [ -f "benchmarks/results_history.jsonl" ]; then
             echo "📊 Comparing metrics with baseline..."
@@ -128,7 +142,20 @@ jobs:
           echo "## 📊 Evaluation Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          if [ -f "eval_output.log" ]; then
+          if [ "${{ steps.check_keys.outputs.has_keys }}" = "false" ]; then
+            echo "### ⚠️ API Keys Not Configured" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Evaluation was skipped because no API keys are configured." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To enable evaluation, add one of the following secrets:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`OPENAI_API_KEY\` - OpenAI API key" >> $GITHUB_STEP_SUMMARY
+            echo "- \`GIGACHAT_CREDENTIALS\` - GigaChat credentials" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Optional:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`LANGSMITH_API_KEY\` - LangSmith tracing (optional)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Go to: Settings → Secrets → Actions → New repository secret" >> $GITHUB_STEP_SUMMARY
+          elif [ -f "eval_output.log" ]; then
             echo "### Evaluation Output" >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             tail -n 50 eval_output.log >> $GITHUB_STEP_SUMMARY
@@ -196,7 +223,7 @@ jobs:
           retention-days: 30
 
       - name: ❌ Fail on regressions
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && steps.check_keys.outputs.has_keys == 'true'
         run: |
           if [ -f "benchmarks/comparison_result.json" ]; then
             REGRESSIONS=$(python -c "import json; r=json.load(open('benchmarks/comparison_result.json')); print(r['summary']['regressions'])")
