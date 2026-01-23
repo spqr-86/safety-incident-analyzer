@@ -246,7 +246,7 @@ git push -u origin test/ci-evaluation
 ```bash
 # После успешного теста - merge главной ветки
 git checkout main
-git merge claude/project-development-plan-Wf6gO
+git merge feature/eval-system
 git push
 
 # Теперь CI/CD активен для всех PR!
