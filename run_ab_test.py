@@ -6,6 +6,11 @@ from langchain.smith import RunEvalConfig
 from langsmith import Client
 
 from src.custom_evaluators import check_correctness
+from src.advanced_generation_metrics import (
+    evaluate_faithfulness,
+    evaluate_answer_relevance,
+    evaluate_citation_quality,
+)
 
 # --- Импортируем цепочки кандидаты ---
 # from src.chain import create_final_rag_chain
@@ -30,6 +35,83 @@ load_dotenv()
 DATASET_NAME = "golden-questions"
 
 
+def faithfulness_evaluator(run, example):
+    """
+    Evaluator для проверки faithfulness (нет ли галлюцинаций).
+    """
+    question = example.inputs.get("question", "")
+    prediction = None
+    context = ""
+
+    if run.outputs:
+        if isinstance(run.outputs, dict):
+            prediction = run.outputs.get("output", "")
+            context = run.outputs.get("context", "")
+
+    if not prediction:
+        return {"score": 0.0, "comment": "Не удалось извлечь ответ модели"}
+
+    judge_llm = get_llm()
+    try:
+        result = evaluate_faithfulness(question, context, prediction, judge_llm)
+        return {
+            "score": result.get("faithfulness_score", 0.0),
+            "comment": result.get("faithfulness_reasoning", ""),
+        }
+    except Exception as e:
+        return {"score": 0.0, "comment": f"Ошибка faithfulness eval: {str(e)}"}
+
+
+def answer_relevance_evaluator(run, example):
+    """
+    Evaluator для проверки релевантности ответа вопросу.
+    """
+    question = example.inputs.get("question", "")
+    prediction = None
+
+    if run.outputs:
+        if isinstance(run.outputs, dict):
+            prediction = run.outputs.get("output", "")
+
+    if not prediction:
+        return {"score": 0.0, "comment": "Не удалось извлечь ответ модели"}
+
+    judge_llm = get_llm()
+    try:
+        result = evaluate_answer_relevance(question, prediction, judge_llm)
+        return {
+            "score": result.get("answer_relevance_score", 0.0),
+            "comment": result.get("answer_relevance_reasoning", ""),
+        }
+    except Exception as e:
+        return {"score": 0.0, "comment": f"Ошибка relevance eval: {str(e)}"}
+
+
+def citation_quality_evaluator(run, example):
+    """
+    Evaluator для проверки качества цитирования.
+    """
+    prediction = None
+    context = ""
+
+    if run.outputs:
+        if isinstance(run.outputs, dict):
+            prediction = run.outputs.get("output", "")
+            context = run.outputs.get("context", "")
+
+    if not prediction:
+        return {"score": 0.0, "comment": "Не удалось извлечь ответ модели"}
+
+    try:
+        result = evaluate_citation_quality(prediction, context, [])
+        # Оценка: 1.0 если есть цитаты, иначе 0.0
+        score = 1.0 if result.get("has_citations", False) else 0.0
+        comment = f"Цитат: {result.get('citation_count', 0)}, уникальных: {result.get('unique_citation_count', 0)}"
+        return {"score": score, "comment": comment}
+    except Exception as e:
+        return {"score": 0.0, "comment": f"Ошибка citation eval: {str(e)}"}
+
+
 def main():
     """
     Основная функция для запуска A/B теста.
@@ -39,10 +121,14 @@ def main():
 
     judge_llm = get_llm()
 
-    # Просим LangSmith автоматически оценить каждый ответ по трем критериям.
+    # Просим LangSmith автоматически оценить каждый ответ по расширенному набору критериев.
     evaluation_config = RunEvalConfig(
-        custom_evaluators=[check_correctness],
-        # custom_evaluators=[check_correctness],
+        custom_evaluators=[
+            check_correctness,  # Correctness (0-10)
+            faithfulness_evaluator,  # Faithfulness (0-1)
+            answer_relevance_evaluator,  # Answer Relevance (0-1)
+            citation_quality_evaluator,  # Citation Quality (0-1)
+        ],
         evaluators=[
             # Судья №1: Проверяет ответ на корректность по сравнению с эталоном (Correctness)
             # Задает вопрос: "Совпадает ли ответ по смыслу с эталонным ответом из датасета?"

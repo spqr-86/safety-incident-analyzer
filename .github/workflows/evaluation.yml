@@ -1,0 +1,264 @@
+name: RAG System Evaluation
+
+on:
+  # Запуск при push в основные ветки
+  push:
+    branches:
+      - main
+      - develop
+      - claude/**
+    paths:
+      - 'src/**'
+      - 'agents/**'
+      - 'config/**'
+      - 'tests/dataset*.csv'
+      - 'eval/**'
+      - '.github/workflows/evaluation.yml'
+
+  # Запуск при pull request
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'src/**'
+      - 'agents/**'
+      - 'config/**'
+
+  # Ручной запуск
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Limit number of questions to evaluate'
+        required: false
+        default: '10'
+      full_evaluation:
+        description: 'Run full evaluation (all questions)'
+        required: false
+        type: boolean
+        default: false
+
+  # По расписанию (еженедельно в воскресенье в 00:00 UTC)
+  schedule:
+    - cron: '0 0 * * 0'
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Полная история для сравнения
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🔍 Check dataset exists
+        run: |
+          if [ ! -f "tests/dataset.csv" ]; then
+            echo "❌ Dataset not found: tests/dataset.csv"
+            exit 1
+          fi
+          echo "✅ Dataset found"
+          wc -l tests/dataset.csv
+
+      - name: 🔑 Check API keys
+        id: check_keys
+        run: |
+          if [ -z "${{ secrets.OPENAI_API_KEY }}" ] && [ -z "${{ secrets.GIGACHAT_CREDENTIALS }}" ]; then
+            echo "⚠️ No API keys configured in GitHub Secrets"
+            echo "⚠️ Skipping evaluation (configure OPENAI_API_KEY or GIGACHAT_CREDENTIALS)"
+            echo "has_keys=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ API keys found"
+            echo "has_keys=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📊 Run evaluation
+        id: eval
+        if: steps.check_keys.outputs.has_keys == 'true'
+        continue-on-error: true
+        env:
+          GIGACHAT_CREDENTIALS: ${{ secrets.GIGACHAT_CREDENTIALS }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+          LANGSMITH_TRACING_V2: true
+          LANGSMITH_PROJECT: safety-incident-analyzer-ci
+        run: |
+          # Определяем limit
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.full_evaluation }}" = "true" ]; then
+              LIMIT=""
+            else
+              LIMIT="--limit ${{ inputs.limit }}"
+            fi
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            # Weekly scheduled run - полная оценка
+            LIMIT=""
+          else
+            # PR или push - быстрая оценка (5 вопросов)
+            LIMIT="--limit 5"
+          fi
+
+          echo "🚀 Running evaluation with params: $LIMIT"
+          python eval/run_full_evaluation.py $LIMIT \
+            --output benchmarks/results_history.jsonl \
+            2>&1 | tee eval_output.log
+
+          # Сохраняем exit code
+          echo "eval_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: 📈 Compare with baseline
+        id: compare
+        if: always() && steps.check_keys.outputs.has_keys == 'true'
+        run: |
+          if [ -f "benchmarks/baseline.json" ] && [ -f "benchmarks/results_history.jsonl" ]; then
+            echo "📊 Comparing metrics with baseline..."
+            python scripts/compare_with_baseline.py \
+              --baseline benchmarks/baseline.json \
+              --output benchmarks/comparison_result.json \
+              2>&1 | tee comparison_output.log || true
+
+            echo "comparison_done=true" >> $GITHUB_OUTPUT
+          else
+            echo "⚠️ Baseline or results not found, skipping comparison"
+            echo "comparison_done=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: 📝 Generate summary
+        if: always()
+        run: |
+          echo "## 📊 Evaluation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.check_keys.outputs.has_keys }}" = "false" ]; then
+            echo "### ⚠️ API Keys Not Configured" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Evaluation was skipped because no API keys are configured." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "To enable evaluation, add one of the following secrets:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`OPENAI_API_KEY\` - OpenAI API key" >> $GITHUB_STEP_SUMMARY
+            echo "- \`GIGACHAT_CREDENTIALS\` - GigaChat credentials" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Optional:" >> $GITHUB_STEP_SUMMARY
+            echo "- \`LANGSMITH_API_KEY\` - LangSmith tracing (optional)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Go to: Settings → Secrets → Actions → New repository secret" >> $GITHUB_STEP_SUMMARY
+          elif [ -f "eval_output.log" ]; then
+            echo "### Evaluation Output" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            tail -n 50 eval_output.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f "comparison_output.log" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Comparison with Baseline" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat comparison_output.log >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 💬 Comment on PR
+        if: github.event_name == 'pull_request' && steps.compare.outputs.comparison_done == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## 📊 Evaluation Results\n\n';
+
+            if (fs.existsSync('comparison_output.log')) {
+              const comparison = fs.readFileSync('comparison_output.log', 'utf8');
+              comment += '### Metrics Comparison\n```\n' + comparison + '\n```\n\n';
+            }
+
+            if (fs.existsSync('benchmarks/comparison_result.json')) {
+              const result = JSON.parse(fs.readFileSync('benchmarks/comparison_result.json', 'utf8'));
+
+              if (result.regressions && result.regressions.length > 0) {
+                comment += '### ⚠️ Warning: Metric Regressions Detected\n\n';
+                result.regressions.forEach(r => {
+                  comment += `- **${r.metric}**: ${r.baseline.toFixed(3)} → ${r.current.toFixed(3)} (${r.change_pct.toFixed(1)}%)\n`;
+                });
+                comment += '\n';
+              }
+
+              if (result.improvements && result.improvements.length > 0) {
+                comment += '### ✅ Improvements\n\n';
+                result.improvements.forEach(r => {
+                  comment += `- **${r.metric}**: ${r.baseline.toFixed(3)} → ${r.current.toFixed(3)} (+${r.change_pct.toFixed(1)}%)\n`;
+                });
+              }
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: 📤 Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: evaluation-results
+          path: |
+            benchmarks/results_history.jsonl
+            benchmarks/comparison_result.json
+            eval_output.log
+            comparison_output.log
+          retention-days: 30
+
+      - name: ❌ Fail on regressions
+        if: github.event_name == 'pull_request' && steps.check_keys.outputs.has_keys == 'true'
+        run: |
+          if [ -f "benchmarks/comparison_result.json" ]; then
+            REGRESSIONS=$(python -c "import json; r=json.load(open('benchmarks/comparison_result.json')); print(r['summary']['regressions'])")
+            if [ "$REGRESSIONS" -gt "0" ]; then
+              echo "❌ Evaluation failed: $REGRESSIONS metric regressions detected"
+              echo "Review the comparison output above for details"
+              exit 1
+            fi
+          fi
+          echo "✅ No regressions detected"
+
+  # Отдельный job для мониторинга drift (только для scheduled runs)
+  drift-detection:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    needs: evaluate
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 📧 Send alert on drift
+        if: needs.evaluate.result == 'failure'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          username: ${{ secrets.ALERT_EMAIL_USERNAME }}
+          password: ${{ secrets.ALERT_EMAIL_PASSWORD }}
+          subject: "⚠️ RAG System Drift Detected"
+          body: |
+            Drift detection alert for Safety Incident Analyzer RAG system.
+
+            Weekly evaluation detected metric regressions.
+
+            Check the GitHub Actions run for details:
+            ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          to: ${{ secrets.ALERT_EMAIL_TO }}
+          from: RAG Eval Bot
