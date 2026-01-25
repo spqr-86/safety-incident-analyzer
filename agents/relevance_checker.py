@@ -62,8 +62,11 @@ class RelevanceChecker:
 
 Ответи одним словом: CAN_ANSWER или PARTIAL или NO_MATCH
 """
-        label = self.llm.invoke(prompt).content.strip().upper()
-        return label if label in {"CAN_ANSWER", "PARTIAL", "NO_MATCH"} else "PARTIAL"
+        out = self.llm.invoke(prompt)
+        content = str(out.content).strip().upper()
+        return (
+            content if content in {"CAN_ANSWER", "PARTIAL", "NO_MATCH"} else "PARTIAL"
+        )
 
     def check(self, question: str, retriever: BaseRetriever, k=3) -> str:
         h = self._heuristic(question, retriever, k=k)

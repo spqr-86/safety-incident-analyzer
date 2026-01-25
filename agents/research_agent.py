@@ -33,5 +33,5 @@ class ResearchAgent:
     def generate(self, question: str, documents: List[Document]) -> Dict:
         prompt = self._prompt(question, documents)
         out = self.llm.invoke(prompt)
-        draft = out.content.strip()
+        draft = str(out.content).strip()
         return {"draft_answer": draft}

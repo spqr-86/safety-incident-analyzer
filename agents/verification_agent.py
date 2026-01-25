@@ -32,7 +32,8 @@ class VerificationAgent:
 """
 
     def check(self, answer: str, documents: List[Document]) -> Dict:
-        raw = self.llm.invoke(self._prompt(answer, documents)).content.strip()
+        out = self.llm.invoke(self._prompt(answer, documents))
+        raw = str(out.content).strip()
         # мягкий парсер JSON (LLM может иногда ошибиться)
         import json
 
@@ -48,12 +49,12 @@ class VerificationAgent:
             }
         # человекочитаемый отчёт
         report = []
-        report.append(f"**Supported:** {data.get('supported','NO')}")
+        report.append(f"**Supported:** {data.get('supported', 'NO')}")
         uc = data.get("unsupported_claims", []) or []
         report.append("**Unsupported Claims:** " + (", ".join(uc) if uc else "None"))
         ct = data.get("contradictions", []) or []
         report.append("**Contradictions:** " + (", ".join(ct) if ct else "None"))
-        report.append(f"**Relevant:** {data.get('relevant','NO')}")
+        report.append(f"**Relevant:** {data.get('relevant', 'NO')}")
         notes = data.get("notes") or "None"
         report.append(f"**Additional Details:** {notes}")
         return {"verification_report": "\n".join(report)}

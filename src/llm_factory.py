@@ -22,7 +22,7 @@ def get_llm():
     print(f"Инициализация LLM от провайдера: {provider}")
 
     if provider == "openai":
-        return ChatOpenAI(
+        llm = ChatOpenAI(
             model=settings.MODEL_NAME,
             temperature=settings.TEMPERATURE,
             timeout=settings.REQUEST_TIMEOUT,
@@ -34,7 +34,7 @@ def get_llm():
                 "Не найдены авторизационные данные для GigaChat. "
                 "Проверьте ваш .env файл."
             )
-        return GigaChat(
+        llm = GigaChat(
             credentials=credentials,
             verify_ssl_certs=False,
             scope="GIGACHAT_API_PERS",
@@ -45,6 +45,9 @@ def get_llm():
             f"Неизвестный провайдер LLM: {provider}. "
             "Доступные варианты: 'openai', 'gigachat'"
         )
+
+    # Добавляем автоматические повторы при сетевых ошибках (в т.ч. SSL)
+    return llm.with_retry(stop_after_attempt=3, wait_exponential_jitter=True)
 
 
 def get_embedding_model():
