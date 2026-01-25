@@ -62,9 +62,20 @@ def check_correctness(run, example):
         }
     )
 
-    # 5. Парсим результат
+    # 5. Парсим результат (убираем markdown обёртку если есть)
     try:
-        result = json.loads(response_str)
+        # Strip markdown code block wrapper if present
+        clean_response = response_str.strip()
+        if clean_response.startswith("```"):
+            # Remove ```json or ``` at start and ``` at end
+            lines = clean_response.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]  # Remove first line with ```json
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]  # Remove last line with ```
+            clean_response = "\n".join(lines)
+
+        result = json.loads(clean_response)
         print(
             f"Оценка получена: Score - {result.get('score')}, Reasoning - '{result.get('reasoning')}'"
         )

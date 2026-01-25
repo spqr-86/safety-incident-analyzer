@@ -65,7 +65,7 @@ mpmath==1.3.0
 multidict==6.5.0
 mypy_extensions==1.1.0
 narwhals==1.44.0
-numpy>=2.1.0
+numpy>=1.26.0,<2  # PyTorch 2.2.2 requires numpy<2
 oauthlib==3.3.1
 onnxruntime==1.22.0
 openai==1.90.0
@@ -134,9 +134,9 @@ websockets==15.0.1
 yarl==1.20.1
 zipp==3.23.0
 zstandard==0.23.0
-llama-index
-docling
+# llama-index  # Temporarily disabled - takes too long to build docling-parse
+docling==2.60.0  # Will build docling-parse from source (no x86_64 wheels available)
 loguru
 langgraph
-pysqlite3-binary
+# pysqlite3-binary  # Only needed for Streamlit Cloud, not macOS
 rank_bm25

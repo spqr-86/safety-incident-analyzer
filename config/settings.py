@@ -37,6 +37,8 @@ class Settings(BaseSettings):
 
     LOG_LEVEL: str = "INFO"
 
+    REQUEST_TIMEOUT: float = 120.0
+
     CACHE_DIR: str = "document_cache"
     CACHE_EXPIRE_DAYS: int = 7
 

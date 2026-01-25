@@ -1,6 +1,9 @@
 import os
 
+from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
+
+load_dotenv()  # Load .env file for GIGACHAT_CREDENTIALS
 
 # --- Важный импорт для локальных моделей ---
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -20,7 +23,9 @@ def get_llm():
 
     if provider == "openai":
         return ChatOpenAI(
-            model_name=settings.MODEL_NAME, temperature=settings.TEMPERATURE
+            model=settings.MODEL_NAME,
+            temperature=settings.TEMPERATURE,
+            timeout=settings.REQUEST_TIMEOUT,
         )
     elif provider == "gigachat":
         credentials = os.getenv("GIGACHAT_CREDENTIALS")
@@ -33,6 +38,7 @@ def get_llm():
             credentials=credentials,
             verify_ssl_certs=False,
             scope="GIGACHAT_API_PERS",
+            timeout=settings.REQUEST_TIMEOUT,
         )
     else:
         raise ValueError(

@@ -16,6 +16,21 @@ from langchain_core.output_parsers import StrOutputParser
 import json
 
 
+def clean_json_response(text: str) -> str:
+    """Очищает JSON от Markdown-разметки и лишнего текста."""
+    # Пытаемся найти блок кода ```json ... ``` или ``` ... ```
+    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    # Если блоков нет, пытаемся найти просто первую и последнюю фигурные скобки
+    match = re.search(r"(\{.*\})", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+
+    return text.strip()
+
+
 def evaluate_faithfulness(
     question: str, context: str, answer: str, llm
 ) -> Dict[str, Any]:
@@ -60,16 +75,22 @@ JSON:"""
     )
 
     chain = prompt | llm | StrOutputParser()
-    response = chain.invoke({"question": question, "context": context, "answer": answer})
+    response = chain.invoke(
+        {"question": question, "context": context, "answer": answer}
+    )
 
     try:
-        result = json.loads(response)
+        cleaned_response = clean_json_response(response)
+        result = json.loads(cleaned_response)
         return {
-            "faithfulness_score": result.get("score", 0.0),
+            "faithfulness_score": float(result.get("score", 0.0)),
             "faithfulness_reasoning": result.get("reasoning", ""),
             "ungrounded_statements": result.get("ungrounded_statements", []),
         }
-    except json.JSONDecodeError:
+    except Exception as e:
+        print(
+            f"  ⚠️  Faithfulness JSON parse error: {e}. Raw response: {response[:100]}..."
+        )
         return {
             "faithfulness_score": 0.0,
             "faithfulness_reasoning": f"Ошибка парсинга: {response}",
@@ -111,12 +132,16 @@ JSON:"""
     response = chain.invoke({"question": question, "answer": answer})
 
     try:
-        result = json.loads(response)
+        cleaned_response = clean_json_response(response)
+        result = json.loads(cleaned_response)
         return {
-            "answer_relevance_score": result.get("score", 0.0),
+            "answer_relevance_score": float(result.get("score", 0.0)),
             "answer_relevance_reasoning": result.get("reasoning", ""),
         }
-    except json.JSONDecodeError:
+    except Exception as e:
+        print(
+            f"  ⚠️  Relevance JSON parse error: {e}. Raw response: {response[:100]}..."
+        )
         return {
             "answer_relevance_score": 0.0,
             "answer_relevance_reasoning": f"Ошибка парсинга: {response}",
@@ -157,13 +182,17 @@ JSON:"""
     response = chain.invoke({"question": question, "context": context})
 
     try:
-        result = json.loads(response)
+        cleaned_response = clean_json_response(response)
+        result = json.loads(cleaned_response)
         return {
-            "context_relevance_score": result.get("score", 0.0),
+            "context_relevance_score": float(result.get("score", 0.0)),
             "context_relevance_reasoning": result.get("reasoning", ""),
             "relevant_sentences": result.get("relevant_sentences", []),
         }
-    except json.JSONDecodeError:
+    except Exception as e:
+        print(
+            f"  ⚠️  Context relevance JSON parse error: {e}. Raw response: {response[:100]}..."
+        )
         return {
             "context_relevance_score": 0.0,
             "context_relevance_reasoning": f"Ошибка парсинга: {response}",
@@ -211,13 +240,17 @@ JSON:"""
     )
 
     try:
-        result = json.loads(response)
+        cleaned_response = clean_json_response(response)
+        result = json.loads(cleaned_response)
         return {
-            "completeness_score": result.get("score", 0.0),
+            "completeness_score": float(result.get("score", 0.0)),
             "completeness_reasoning": result.get("reasoning", ""),
             "missing_points": result.get("missing_points", []),
         }
-    except json.JSONDecodeError:
+    except Exception as e:
+        print(
+            f"  ⚠️  Completeness JSON parse error: {e}. Raw response: {response[:100]}..."
+        )
         return {
             "completeness_score": 0.0,
             "completeness_reasoning": f"Ошибка парсинга: {response}",
