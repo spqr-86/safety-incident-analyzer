@@ -196,3 +196,12 @@ cython_debug/
 # macOS
 .DS_Store
 
+
+# Project specific
+document_cache/
+chroma_db*/
+production_logs/
+storage_llamaindex/
+analysis/error_reports/
+app.log
+*.pkl

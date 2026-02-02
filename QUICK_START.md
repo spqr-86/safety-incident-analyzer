@@ -351,8 +351,8 @@ export LANGSMITH_TRACING_V2=true
 - [Полный план развития](./DEVELOPMENT_PLAN.md)
 - [LangSmith Docs](https://docs.smith.langchain.com/)
 - [RAGAS Framework](https://docs.ragas.io/)
-- [Retrieval метрики (src)](./src/retrieval_metrics.py)
-- [Generation метрики (src)](./src/advanced_generation_metrics.py)
+- [Retrieval метрики](./src/retrieval_metrics.py)
+- [Advanced Generation метрики](./src/advanced_generation_metrics.py)
 
 ---
 

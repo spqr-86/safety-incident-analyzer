@@ -13,19 +13,12 @@ from src.advanced_generation_metrics import (
 )
 
 # --- Импортируем цепочки кандидаты ---
-# from src.chain import create_final_rag_chain
-# from src.hybrid_chain import create_hybrid_rag_chain
-# from src.sentence_window_chain import create_sentence_window_chain
-# from src.hyde_chain import create_hyde_rag_chain
 from src.final_chain import create_final_hybrid_chain
 from src.llm_factory import get_llm
 from src.ultimate_chain import create_ultimate_chain
 
 # Убираем предупреждения о параллелизме
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-# sentence_window_chain = create_sentence_window_chain()
-# hyde_chain = create_hyde_rag_chain()
 
 load_dotenv()
 
@@ -144,12 +137,6 @@ def main():
 
     # Словарь с "кандидатами" на тестирование
     candidate_chains = {
-        # "langchain_native_rag": final_chain_for_test, # Ваша оригинальная цепочка
-        # # "langchain_llama_index_hybrid": create_hybrid_rag_chain(), # Наша гибридная цепочка
-        # # "sentence_window_llamaindex": sentence_window_chain,
-        # "hyde_advanced_rag": hyde_chain,
-        # "ultimate_rag": create_ultimate_rag_chain(),
-        # "final_hybrid_rag": create_final_hybrid_chain(),
         "ultimate_rag": create_ultimate_chain(),
     }
 
