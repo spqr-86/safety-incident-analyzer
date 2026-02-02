@@ -1,0 +1,16 @@
+# Реестр промптов системы
+# Формат:
+# prompt_id:
+#   active_version: "v1"
+#   versions:
+#     v1: "relative/path/to/file.j2"
+
+research_agent:
+  active_version: "v1"
+  versions:
+    v1: "agents/research_v1.j2"
+
+verification_agent:
+  active_version: "v1"
+  versions:
+    v1: "agents/verification_v1.j2"
