@@ -168,13 +168,31 @@ def demo_comparison_scenarios():
     relevant = ["doc_target_1", "doc_target_2", "doc_target_3"]
 
     # Стратегия A: Векторный поиск
-    strategy_a = ["doc_target_1", "doc_noise_1", "doc_target_2", "doc_noise_2", "doc_target_3"]
+    strategy_a = [
+        "doc_target_1",
+        "doc_noise_1",
+        "doc_target_2",
+        "doc_noise_2",
+        "doc_target_3",
+    ]
 
     # Стратегия B: Гибридный (векторный + BM25)
-    strategy_b = ["doc_target_1", "doc_target_2", "doc_target_3", "doc_noise_1", "doc_noise_2"]
+    strategy_b = [
+        "doc_target_1",
+        "doc_target_2",
+        "doc_target_3",
+        "doc_noise_1",
+        "doc_noise_2",
+    ]
 
     # Стратегия C: Только BM25
-    strategy_c = ["doc_noise_1", "doc_target_1", "doc_noise_2", "doc_target_2", "doc_noise_3"]
+    strategy_c = [
+        "doc_noise_1",
+        "doc_target_1",
+        "doc_noise_2",
+        "doc_target_2",
+        "doc_noise_3",
+    ]
 
     strategies = {
         "Векторный": strategy_a,
@@ -219,8 +237,8 @@ def main():
     print("=" * 70)
     print("\n📚 Дополнительные ресурсы:")
     print("  • Полная eval: python eval/run_full_evaluation.py")
-    print("  • Примеры: eval/EXAMPLES.md")
-    print("  • Quick Start: QUICK_START.md")
+    print("  • Примеры: docs/evaluation/examples.md")
+    print("  • Quick Start: docs/guides/quick-start.md")
     print("  • Unit тесты: python -m pytest tests/test_retrieval_metrics.py -v")
     print("\n")
 

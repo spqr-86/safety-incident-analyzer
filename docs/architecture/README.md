@@ -87,10 +87,10 @@ streamlit run app.py     # Запуск UI
 2. Напишите воспроизводящий тест в `tests/`.
 
 **Написать тест:**
-Используйте `pytest`. Тесты находятся в папке `tests/`. См. подробнее в [TESTING_DOCS.md](./TESTING_DOCS.md).
+Используйте `pytest`. Тесты находятся в папке `tests/`. См. подробнее в [testing.md](../guides/testing.md).
 
 **Хочу проверить документацию:**
-См. [TESTING_DOCS.md](./TESTING_DOCS.md) для инструкции по проверке ссылок и актуальности.
+См. [testing.md](../guides/testing.md) для инструкции по проверке ссылок и актуальности.
 
 ### Развертывание (Deploy)
 - **Streamlit Cloud:** Подключите репозиторий GitHub и укажите `app.py`.
