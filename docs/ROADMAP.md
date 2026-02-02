@@ -557,8 +557,9 @@ score = 0.5 * correctness + 0.3 * faithfulness + 0.1 * latency_penalty + 0.1 * c
 ---
 
 ### **Sprint 2 (1-2 недели): Автоматизация** — 🔄 В ПРОЦЕССЕ
-1. ❌ Интеграция W&B для experiment tracking — **не реализовано**
-2. ✅ CI/CD pipeline (GitHub Actions) — `.github/workflows/evaluation.yml`
+1. ✅ Prompt Management System (Versioning, Jinja2, Registry) — внедрено
+2. ❌ Интеграция W&B для experiment tracking — **не реализовано**
+3. ✅ CI/CD pipeline (GitHub Actions) — `.github/workflows/evaluation.yml`
 3. ❌ Расширение датасета до 100 вопросов — **текущее: 41**
 4. ❌ Retrieval dataset с аннотацией релевантности — **не создан**
 

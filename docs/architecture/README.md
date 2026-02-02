@@ -153,6 +153,8 @@ streamlit run app.py     # Запуск UI
 - **Реестр:** `prompts/registry.yaml` управляет версиями.
 - **Pinning:** Версию любого промпта можно переопределить через переменную окружения `PROMPT_{ID}_VERSION`.
 
+Подробнее см. в руководстве: [Prompt Management Guide](../guides/prompt-management.md).
+
 ### Relevance Checker
 Первый рубеж обороны. Классифицирует вопрос пользователя на три категории:
 - `CAN_ANSWER`: Вопрос по теме охраны труда.
