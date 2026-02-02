@@ -17,9 +17,6 @@ from .prompt_manager import PromptManager
 
 
 def format_docs(docs):
-
-
-def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 

@@ -17,9 +17,6 @@ from .prompt_manager import PromptManager
 
 
 def create_sentence_level_retrievers(docs):
-
-
-def create_sentence_level_retrievers(docs):
     """
     Создает и возвращает два ретривера, работающих на уровне предложений.
     """
