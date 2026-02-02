@@ -1,7 +1,5 @@
 # Documentation Update Implementation Plan
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
-
 **Goal:** Create comprehensive documentation (README, Codebase Analysis, Testing Docs) for the AI Safety Compliance Assistant.
 
 **Architecture:** Pure documentation update. No code changes. Using project conventions and information gathered from codebase exploration.
