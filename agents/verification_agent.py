@@ -19,6 +19,12 @@ class VerificationAgent:
         raw = str(out.content).strip()
         # мягкий парсер JSON (LLM может иногда ошибиться)
         import json
+        import re
+
+        # Убираем markdown-обёртку если есть (```json ... ```)
+        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        if json_match:
+            raw = json_match.group(1)
 
         try:
             data = json.loads(raw)
