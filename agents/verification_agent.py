@@ -3,36 +3,19 @@ from typing import Dict, List
 from langchain.schema import Document
 
 from src.llm_factory import get_llm
+from src.prompt_manager import PromptManager
 
 
 class VerificationAgent:
     def __init__(self):
         self.llm = get_llm()
-
-    def _prompt(self, answer: str, docs: List[Document]) -> str:
-        context = "\n\n".join(d.page_content for d in docs)
-        return f"""
-Ты — проверяющий по нормативной документации (СНиП, ГОСТ, ОТ, ПБ).
-Проверь, что ответ поддержан контекстом и релевантен вопросу.
-
-Верни строго JSON с ключами:
-{{
-  "supported": "YES|NO",
-  "unsupported_claims": ["..."],
-  "contradictions": ["..."],
-  "relevant": "YES|NO",
-  "notes": "строка"
-}}
-
-Ответ для проверки:
-{answer}
-
-Контекст:
-{context}
-"""
+        self.prompt_manager = PromptManager()
 
     def check(self, answer: str, documents: List[Document]) -> Dict:
-        out = self.llm.invoke(self._prompt(answer, documents))
+        prompt = self.prompt_manager.render(
+            "verification_agent", answer=answer, documents=documents
+        )
+        out = self.llm.invoke(prompt)
         raw = str(out.content).strip()
         # мягкий парсер JSON (LLM может иногда ошибиться)
         import json

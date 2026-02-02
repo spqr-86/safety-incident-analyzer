@@ -5,6 +5,7 @@ from langchain_core.retrievers import BaseRetriever
 
 from config import settings
 from src.llm_factory import get_llm
+from src.prompt_manager import PromptManager
 
 
 class RelevanceChecker:
@@ -18,6 +19,7 @@ class RelevanceChecker:
     def __init__(self, use_llm_judge: bool = True):
         self.use_llm_judge = use_llm_judge
         self.llm = get_llm() if use_llm_judge else None
+        self.prompt_manager = PromptManager()
 
     def _heuristic(
         self,
@@ -44,24 +46,13 @@ class RelevanceChecker:
     def _llm_judge(self, question: str, docs: List[Document], k: int = 6) -> str:
         if not self.llm:
             return "PARTIAL"
-        passages = "\n\n".join(d.page_content for d in docs[:k])
-        prompt = f"""
-Ты — классификатор релевантности вопроса и текстовых фрагментов из 
-нормативной базы (СНиП, ГОСТ, ОТ, ПБ).
-Оцени, можно ли на основе фрагментов полностью ответить на вопрос.
 
-Верни ровно один лейбл:
-- CAN_ANSWER — можно полностью ответить;
-- PARTIAL — тема есть, но ответа не хватает;
-- NO_MATCH — тема не затрагивается.
+        # Передаем уже обрезанный список документов в промпт
+        top_docs = docs[:k]
 
-Вопрос: {question}
-
-Фрагменты:
-{passages}
-
-Ответи одним словом: CAN_ANSWER или PARTIAL или NO_MATCH
-"""
+        prompt = self.prompt_manager.render(
+            "relevance_checker", question=question, documents=top_docs
+        )
         out = self.llm.invoke(prompt)
         content = str(out.content).strip().upper()
         return (

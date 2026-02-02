@@ -6,13 +6,17 @@ from langchain_community.document_compressors import FlashrankRerank
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.messages import HumanMessage
 
 from config.settings import settings
 
 from .llm_factory import get_llm
 from .vector_store import load_vector_store
+from .prompt_manager import PromptManager
+
+
+def format_docs(docs):
 
 
 def format_docs(docs):
@@ -57,19 +61,12 @@ def create_final_hybrid_chain():
 
     # 6) Генерация
     final_llm = get_llm()
+    prompt_manager = PromptManager()
 
-    final_template = """Вы — ИИ-ассистент.
-Используя ТОЛЬКО предоставленный Контекст, дайте четкий и исчерпывающий ответ на Вопрос.
-Не придумывайте информацию. Отвечай на русском языке.
-
-Контекст:
-{context}
-
-Вопрос:
-{question}
-
-Ответ:"""
-    final_prompt = ChatPromptTemplate.from_template(final_template)
+    def render_prompt(inputs):
+        """Рендерит промпт через PromptManager и возвращает список сообщений."""
+        text = prompt_manager.render("final_chain", **inputs)
+        return [HumanMessage(content=text)]
 
     final_chain = (
         {
@@ -77,7 +74,7 @@ def create_final_hybrid_chain():
             "question": itemgetter("question"),
         }
         | RunnablePassthrough.assign(context=lambda x: format_docs(x["context"]))
-        | final_prompt
+        | RunnableLambda(render_prompt)
         | final_llm
         | StrOutputParser()
     )

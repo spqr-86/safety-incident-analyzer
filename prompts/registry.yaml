@@ -1,5 +1,5 @@
-research_agent:
-  active_version: v1
+
+final_chain:
+  active_version: "v1"
   versions:
-    v1: agents/research_v1.j2
-    v2: agents/research_v2.j2
+    v1: "chains/ultimate_v1.j2"

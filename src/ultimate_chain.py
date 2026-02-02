@@ -6,13 +6,17 @@ from langchain_chroma import Chroma
 from langchain_community.document_compressors import FlashrankRerank
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.messages import HumanMessage
 
 import config
 
 from .data_processing import load_and_chunk_documents
 from .llm_factory import get_embedding_model, get_llm
+from .prompt_manager import PromptManager
+
+
+def create_sentence_level_retrievers(docs):
 
 
 def create_sentence_level_retrievers(docs):
@@ -89,20 +93,12 @@ def create_ultimate_chain():
 
     # --- 4. Финальная цепочка для генерации ответа ---
     final_llm = get_llm()
+    prompt_manager = PromptManager()
 
-    final_template = """Вы — ИИ-ассистент.
-    Используя ТОЛЬКО предоставленный Контекст, дайте четкий и исчерпывающий
-    ответ на Вопрос. Не придумывайте информацию. Отвечай на русском языке.
-
-    Контекст:
-    {context}
-
-    Вопрос:
-    {question}
-
-    Ответ:"""
-
-    final_prompt = ChatPromptTemplate.from_template(final_template)
+    def render_prompt(inputs):
+        """Рендерит промпт через PromptManager и возвращает список сообщений."""
+        text = prompt_manager.render("ultimate_chain", **inputs)
+        return [HumanMessage(content=text)]
 
     # Собираем все в единый конвейер
     ultimate_chain = (
@@ -113,7 +109,7 @@ def create_ultimate_chain():
         | RunnablePassthrough.assign(
             context=(lambda x: get_windowed_context(x["context"]))
         )
-        | final_prompt
+        | RunnableLambda(render_prompt)
         | final_llm
         | StrOutputParser()
     )
