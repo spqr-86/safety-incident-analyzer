@@ -8,8 +8,8 @@ from .relevance_checker import RelevanceChecker
 from .research_agent import ResearchAgent
 from .verification_agent import VerificationAgent
 
-MAX_RERUNS = 1
-TOPK_DOCS_FOR_AGENTS = 20  # Увеличили для глубокого анализа больших документов
+MAX_RERUNS = 2
+TOPK_DOCS_FOR_AGENTS = 12  # Увеличено до лимита реранкера
 
 
 class AgentState(TypedDict):

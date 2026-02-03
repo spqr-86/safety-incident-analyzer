@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     CHROMA_DB_PATH: str = "./chroma_db"
     CHROMA_COLLECTION_NAME: str = "documents"
 
-    VECTOR_SEARCH_K: int = 10
+    VECTOR_SEARCH_K: int = 20
     HYBRID_RETRIEVER_WEIGHTS: list[float] = [0.6, 0.4]
 
     LOG_LEVEL: str = "INFO"
@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     CACHE_DIR: str = "document_cache"
     CACHE_EXPIRE_DAYS: int = 7
 
-    CHUNK_SIZE: int = 1200
-    CHUNK_OVERLAP: int = 150
+    CHUNK_SIZE: int = 2000
+    CHUNK_OVERLAP: int = 200
 
     SOURCE_DOCS_PATH: str = "./source_docs"
 
