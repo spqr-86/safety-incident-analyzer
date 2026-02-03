@@ -57,8 +57,8 @@ with right:
             </div><br/>
             <div style="display:inline-block;margin-top:6px;padding:6px 10px;border-radius:8px;
                         background:#ecfeff;border:1px solid #a5f3fc;font-size:12px;">
-                Embeddings: <b>{getattr(settings,'EMBEDDING_PROVIDER','?')}</b>
-                · <b>{getattr(settings,'EMBEDDING_MODEL_NAME','?')}</b>
+                Embeddings: <b>{getattr(settings, "EMBEDDING_PROVIDER", "?")}</b>
+                · <b>{getattr(settings, "EMBEDDING_MODEL_NAME", "?")}</b>
             </div>
         </div>
         """,
@@ -194,6 +194,15 @@ if user_query:
 
                     if not answer:
                         answer = "Не удалось сформировать ответ."
+
+                    # Показываем ход мыслей агента в экспандере (для прозрачности)
+                    research_thought = result.get("research_thought", "").strip()
+                    if research_thought:
+                        with st.expander(
+                            "💭 Ход рассуждений агента (Chain-of-Thought)",
+                            expanded=False,
+                        ):
+                            st.markdown(research_thought)
 
                     st.markdown(answer)
                     # Сохраним последний ответ для истории

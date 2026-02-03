@@ -17,7 +17,11 @@ import argparse
 # Добавляем корень проекта в путь
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.retrieval_metrics import evaluate_retrieval, hit_rate_at_k, mean_reciprocal_rank
+from src.retrieval_metrics import (
+    evaluate_retrieval,
+    hit_rate_at_k,
+    mean_reciprocal_rank,
+)
 from src.advanced_generation_metrics import (
     evaluate_faithfulness,
     evaluate_answer_relevance,
@@ -26,6 +30,7 @@ from src.advanced_generation_metrics import (
 from src.custom_evaluators import check_correctness
 from src.llm_factory import get_llm
 from src.final_chain import create_final_hybrid_chain
+from agents.workflow import AgentWorkflow
 
 
 def load_dataset(dataset_path: str) -> List[Dict[str, Any]]:
@@ -43,6 +48,7 @@ def evaluate_single_query(
     chain,
     retriever,
     llm,
+    mode: str = "rag",
 ) -> Dict[str, Any]:
     """
     Оценивает один запрос (retrieval + generation).
@@ -54,25 +60,41 @@ def evaluate_single_query(
 
     # 1. Retrieval
     retrieval_start = time.time()
-    retrieved_docs = retriever.get_relevant_documents(question)
+    retrieved_docs = retriever.invoke(
+        question
+    )  # Используем invoke вместо get_relevant_documents
     retrieval_time = time.time() - retrieval_start
 
     result["retrieval_time"] = retrieval_time
     result["num_retrieved_docs"] = len(retrieved_docs)
-
-    # Упрощенная оценка retrieval (для полной нужна аннотация релевантности)
     result["retrieved_doc_ids"] = [str(i) for i in range(len(retrieved_docs))]
 
     # 2. Generation
     generation_start = time.time()
     try:
-        response = chain.invoke({"question": question})
-        answer = response.get("output", "") if isinstance(response, dict) else str(response)
-        context = response.get("context", "") if isinstance(response, dict) else ""
+        if mode == "mas":
+            # MAS пайплайн (через LangGraph)
+            res = chain.full_pipeline(question, retriever)
+            answer = res.get("draft_answer", "")
+            thought = res.get("research_thought", "")
+            # Используем все найденные документы для контекста оценки
+            context = "\n\n".join([d.page_content for d in retrieved_docs[:20]])
+        else:
+            # Стандартный RAG (цепочка LangChain)
+            response = chain.invoke({"question": question})
+            answer = (
+                response.get("output", "")
+                if isinstance(response, dict)
+                else str(response)
+            )
+            context = response.get("context", "") if isinstance(response, dict) else ""
+            thought = ""
+
     except Exception as e:
-        print(f"  ❌ Ошибка генерации: {e}")
+        print(f"  ❌ Ошибка генерации ({mode}): {e}")
         answer = ""
         context = ""
+        thought = ""
 
     generation_time = time.time() - generation_start
     total_time = retrieval_time + generation_time
@@ -81,6 +103,7 @@ def evaluate_single_query(
     result["total_time"] = total_time
     result["answer"] = answer
     result["context"] = context
+    result["thought"] = thought
 
     # 3. Generation метрики
     if answer:
@@ -166,13 +189,19 @@ def aggregate_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 def main():
     parser = argparse.ArgumentParser(description="Полная оценка RAG системы")
     parser.add_argument(
+        "--mode",
+        choices=["rag", "mas"],
+        default="rag",
+        help="Режим работы: обычный RAG (rag) или многоагентный (mas)",
+    )
+    parser.add_argument(
         "--dataset",
         default="tests/dataset.csv",
         help="Путь к датасету (CSV)",
     )
     parser.add_argument(
         "--output",
-        default="benchmarks/results_history.jsonl",
+        default=None,
         help="Путь для сохранения результатов (JSONL)",
     )
     parser.add_argument(
@@ -183,13 +212,24 @@ def main():
     )
     args = parser.parse_args()
 
-    print("🚀 Запуск полной оценки RAG системы...")
+    # Формируем путь вывода по умолчанию, если не задан
+    if not args.output:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        args.output = f"benchmarks/eval_{args.mode}_{timestamp}.jsonl"
+
+    print(f"🚀 Запуск оценки в режиме: {args.mode.upper()}")
     print(f"📂 Датасет: {args.dataset}")
 
     # Инициализация
     print("\n🔧 Инициализация компонентов...")
     llm = get_llm()
-    chain, retriever = create_final_hybrid_chain()
+    rag_chain, retriever = create_final_hybrid_chain()
+
+    if args.mode == "mas":
+        print("🤖 Загрузка MAS Workflow...")
+        chain = AgentWorkflow()
+    else:
+        chain = rag_chain
 
     # Загрузка датасета
     dataset = load_dataset(args.dataset)
@@ -207,7 +247,15 @@ def main():
 
         print(f"\n[{i}/{len(dataset)}] {question[:60]}...")
 
-        result = evaluate_single_query(question, ground_truth, chain, retriever, llm)
+        result = evaluate_single_query(
+            question, ground_truth, chain, retriever, llm, mode=args.mode
+        )
+
+        # Debug: Print full answer
+        print(f"  🤖 Ответ: {result.get('answer', '')[:200]}...")
+        if result.get("thought"):
+            print(f"  💭 Мысли: {result.get('thought', '')[:200]}...")
+
         result["question"] = question
         result["ground_truth"] = ground_truth
         results.append(result)
@@ -228,7 +276,9 @@ def main():
 
     print("\n🎯 Correctness:")
     print(f"  Среднее:     {agg_metrics.get('mean_correctness_score', 0):.2f}/10")
-    print(f"  Мин/Макс:    {agg_metrics.get('min_correctness_score', 0):.1f} / {agg_metrics.get('max_correctness_score', 0):.1f}")
+    print(
+        f"  Мин/Макс:    {agg_metrics.get('min_correctness_score', 0):.1f} / {agg_metrics.get('max_correctness_score', 0):.1f}"
+    )
 
     print("\n✅ Faithfulness:")
     print(f"  Среднее:     {agg_metrics.get('mean_faithfulness_score', 0):.3f}")
@@ -272,7 +322,10 @@ def main():
     checks = [
         ("Correctness > 7.0", agg_metrics.get("mean_correctness_score", 0) > 7.0),
         ("Faithfulness > 0.85", agg_metrics.get("mean_faithfulness_score", 0) > 0.85),
-        ("Answer Relevance > 0.80", agg_metrics.get("mean_answer_relevance_score", 0) > 0.80),
+        (
+            "Answer Relevance > 0.80",
+            agg_metrics.get("mean_answer_relevance_score", 0) > 0.80,
+        ),
         ("P95 Latency < 15s", agg_metrics.get("p95_total_time", 999) < 15.0),
     ]
 

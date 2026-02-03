@@ -17,24 +17,33 @@ class VerificationAgent:
         )
         out = self.llm.invoke(prompt)
         raw = str(out.content).strip()
-        # мягкий парсер JSON (LLM может иногда ошибиться)
         import json
         import re
 
-        # Убираем markdown-обёртку если есть (```json ... ```)
-        json_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+        # 1. Сначала ищем в теге <json>...</json> (v2 формат)
+        json_match = re.search(r"<json>(.*?)</json>", raw, re.DOTALL)
         if json_match:
-            raw = json_match.group(1)
+            raw_json = json_match.group(1)
+        else:
+            # 2. Fallback: markdown code blocks (v1 формат или ошибка модели)
+            code_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+            if code_match:
+                raw_json = code_match.group(1)
+            else:
+                # 3. Fallback: просто ищем {}
+                brace_match = re.search(r"(\{.*\})", raw, re.DOTALL)
+                raw_json = brace_match.group(1) if brace_match else raw
 
         try:
-            data = json.loads(raw)
+            data = json.loads(raw_json)
         except Exception:
+            # Если совсем не распарсилось
             data = {
                 "supported": "NO",
                 "unsupported_claims": [],
                 "contradictions": [],
                 "relevant": "NO",
-                "notes": "Failed to parse verifier JSON.",
+                "notes": f"Failed to parse verifier JSON. Raw output: {raw[:100]}...",
             }
         # человекочитаемый отчёт
         report = []

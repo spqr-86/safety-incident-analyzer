@@ -51,7 +51,7 @@ def create_final_hybrid_chain():
         model_name=settings.RERANKING_MODEL,
         cache_dir=getattr(settings, "FLASHRANK_CACHE_DIR", None),
     )
-    compressor = FlashrankRerank(client=flashrank_client, top_n=5)
+    compressor = FlashrankRerank(client=flashrank_client, top_n=20)
     final_retriever = ContextualCompressionRetriever(
         base_compressor=compressor, base_retriever=ensemble_retriever
     )

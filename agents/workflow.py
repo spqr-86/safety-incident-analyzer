@@ -8,14 +8,15 @@ from .relevance_checker import RelevanceChecker
 from .research_agent import ResearchAgent
 from .verification_agent import VerificationAgent
 
-MAX_RERUNS = 2
-TOPK_DOCS_FOR_AGENTS = 8  # чтобы не перегружать LLM
+MAX_RERUNS = 1
+TOPK_DOCS_FOR_AGENTS = 20  # Увеличили для глубокого анализа больших документов
 
 
 class AgentState(TypedDict):
     question: str
     documents: List[Document]
     draft_answer: str
+    research_thought: str  # Added field for thought chain
     verification_report: str
     is_relevant: bool
     retriever: BaseRetriever
@@ -52,6 +53,7 @@ class AgentWorkflow:
             "question": question,
             "documents": docs[:TOPK_DOCS_FOR_AGENTS],
             "draft_answer": "",
+            "research_thought": "",
             "verification_report": "",
             "is_relevant": False,
             "retriever": retriever,
@@ -60,6 +62,7 @@ class AgentWorkflow:
         final_state = self.compiled_workflow.invoke(initial_state)
         return {
             "draft_answer": final_state["draft_answer"],
+            "research_thought": final_state.get("research_thought", ""),
             "verification_report": final_state["verification_report"],
         }
 
@@ -79,7 +82,10 @@ class AgentWorkflow:
 
     def _research_step(self, state: AgentState) -> Dict:
         res = self.researcher.generate(state["question"], state["documents"])
-        return {"draft_answer": res["draft_answer"]}
+        return {
+            "draft_answer": res["draft_answer"],
+            "research_thought": res.get("thought", ""),
+        }
 
     def _verification_step(self, state: AgentState) -> Dict:
         res = self.verifier.check(state["draft_answer"], state["documents"])

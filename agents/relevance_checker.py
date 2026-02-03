@@ -43,7 +43,7 @@ class RelevanceChecker:
             label = "NO_MATCH"
         return {"label": label, "docs": topk}
 
-    def _llm_judge(self, question: str, docs: List[Document], k: int = 6) -> str:
+    def _llm_judge(self, question: str, docs: List[Document], k: int = 10) -> str:
         if not self.llm:
             return "PARTIAL"
 
@@ -54,10 +54,27 @@ class RelevanceChecker:
             "relevance_checker", question=question, documents=top_docs
         )
         out = self.llm.invoke(prompt)
-        content = str(out.content).strip().upper()
-        return (
-            content if content in {"CAN_ANSWER", "PARTIAL", "NO_MATCH"} else "PARTIAL"
-        )
+        raw = str(out.content).strip()
+
+        # Парсим лейбл (поддержка v1 plain text и v2 <label> tag)
+        import re
+
+        label_match = re.search(r"<label>(.*?)</label>", raw)
+        if label_match:
+            label = label_match.group(1).strip()
+        else:
+            # Fallback для v1
+            content = raw.upper()
+            if "CAN_ANSWER" in content:
+                label = "CAN_ANSWER"
+            elif "PARTIAL" in content:
+                label = "PARTIAL"
+            elif "NO_MATCH" in content:
+                label = "NO_MATCH"
+            else:
+                label = "PARTIAL"
+
+        return label if label in {"CAN_ANSWER", "PARTIAL", "NO_MATCH"} else "PARTIAL"
 
     def check(self, question: str, retriever: BaseRetriever, k=3) -> str:
         h = self._heuristic(question, retriever, k=k)

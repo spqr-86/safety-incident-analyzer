@@ -32,13 +32,14 @@ sequenceDiagram
         Workflow-->>User: Отказ
     else Relevant
         Relevance-->>Workflow: CAN_ANSWER / PARTIAL
-        loop Research Loop (Max 2)
-            Workflow->>Research: Поиск и генерация ответа
-            Research-->>Workflow: Черновик ответа
+        loop Research Loop (Max 1)
+            Workflow->>Research: Поиск и генерация (CoT)
+            Note right of Research: Анализ в <thought>, ответ в <answer>
+            Research-->>Workflow: Черновик ответа + Ход мыслей
             Workflow->>Verify: Проверка фактов
             alt Good
                 Verify-->>Workflow: CORRECT
-                Workflow-->>User: Финальный ответ
+                Workflow-->>User: Финальный ответ + Chain-of-Thought
             else Bad
                 Verify-->>Workflow: REVISE (Замечания)
                 Note right of Workflow: Возврат на доработку
@@ -52,10 +53,10 @@ sequenceDiagram
 | Step | Component | Action |
 |------|-----------|--------|
 | 1. Ingestion | `index.py` | Загрузка и индексация документов в ChromaDB |
-| 2. Retrieval | `src/final_chain.py` | Поиск релевантных чанков (Hybrid + Rerank) |
-| 3. Relevance Check | `agents/relevance_checker.py` | Проверка вопроса на соответствие теме |
-| 4. Generation | `agents/research_agent.py` | Генерация ответа на основе контекста |
-| 5. Verification | `agents/verification_agent.py` | Проверка фактов и отсутствия галлюцинаций |
+| 2. Retrieval | `src/final_chain.py` | Поиск релевантных чанков (Hybrid K=40 + Rerank Top-20) |
+| 3. Relevance Check | `agents/relevance_checker.py` | Классификация вопроса с использованием CoT |
+| 4. Generation | `agents/research_agent.py` | Генерация ответа в тегах `<answer>` после размышлений в `<thought>` |
+| 5. Verification | `agents/verification_agent.py` | Проверка фактов в формате JSON с поддержкой логического вывода |
 
 ---
 

@@ -16,5 +16,31 @@ class ResearchAgent:
             "research_agent", question=question, documents=documents
         )
         out = self.llm.invoke(prompt)
-        draft = str(out.content).strip()
-        return {"draft_answer": draft}
+        raw = str(out.content).strip()
+
+        # Попытка извлечь блоки <thought> и <answer>
+        import re
+
+        # Извлекаем с поддержкой любого регистра и многострочности
+        thought_match = re.search(
+            r"<thought>(.*?)</thought>", raw, re.DOTALL | re.IGNORECASE
+        )
+        answer_match = re.search(
+            r"<answer>(.*?)</answer>", raw, re.DOTALL | re.IGNORECASE
+        )
+
+        thought = thought_match.group(1).strip() if thought_match else ""
+        answer = answer_match.group(1).strip() if answer_match else raw
+
+        # Дополнительная очистка, если теги остались в ответе (например, если answer_match не сработал)
+        if not answer_match:
+            # Удаляем мысли из ответа, если они там остались
+            answer = re.sub(
+                r"<thought>.*?</thought>", "", answer, flags=re.DOTALL | re.IGNORECASE
+            ).strip()
+            # Удаляем сами теги
+            answer = re.sub(
+                r"<(?:/)?(?:answer|thought)>", "", answer, flags=re.IGNORECASE
+            ).strip()
+
+        return {"draft_answer": answer, "thought": thought}

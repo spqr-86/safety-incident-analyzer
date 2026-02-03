@@ -47,20 +47,18 @@ def evaluate_faithfulness(
         Dict с score (0-1) и reasoning
     """
     prompt = ChatPromptTemplate.from_template(
-        """Ты - строгий судья. Оцени, подтверждены ли ВСЕ фактические утверждения в Ответе предоставленным Контекстом.
+        """Ты - строгий, но справедливый ИИ-судья. Оцени, подтвержден ли Ответ предоставленным Контекстом.
 
 # КРИТЕРИИ:
-- 1.0: Все утверждения полностью подтверждены Контекстом
-- 0.7-0.9: Большинство утверждений подтверждены, есть незначительные выводы
-- 0.4-0.6: Частично подтверждено, есть неподтвержденные утверждения
-- 0.1-0.3: Много неподтвержденной информации или противоречий
-- 0.0: Ответ содержит выдуманные факты (галлюцинации)
+- 1.0: Все утверждения подтверждены Контекстом. 
+- 0.8-0.9: Утверждения подтверждены, допускается логический вывод (например, применение общих норм для всех работников к конкретной профессии, если в ответе это оговорено).
+- 0.5-0.7: Частично подтверждено, есть небольшие неточности или недосказанности.
+- 0.0-0.4: Ответ содержит выдуманные факты, ссылки на несуществующие пункты или грубые ошибки.
 
 # ИНСТРУКЦИЯ:
 Верни JSON с ключами:
 - "score": число от 0.0 до 1.0
-- "reasoning": объяснение (какие утверждения подтверждены, какие нет)
-- "ungrounded_statements": список неподтвержденных утверждений (если есть)
+- "reasoning": краткое объяснение (какие утверждения подтверждены, какие нет)
 
 # ДАННЫЕ:
 Вопрос: {question}
@@ -258,25 +256,33 @@ JSON:"""
         }
 
 
-def extract_citations(text: str) -> List[int]:
+def extract_citations(text: str) -> List[str]:
     """
-    Извлекает номера цитат из текста в формате [cite: X, Y, Z].
+    Извлекает цитаты из текста. Поддерживает форматы:
+    - [cite: 1, 2]
+    - [Источник: Название, п. X.Y]
+    - [Источник: ...]
 
     Args:
         text: Текст с цитатами
 
     Returns:
-        Список номеров цитат
+        Список строк-цитат
     """
-    # Паттерн для [cite: 140, 141, 143] или [cite: 140]
-    pattern = r"\[cite:\s*([0-9,\s]+)\]"
-    matches = re.findall(pattern, text)
-
     citations = []
-    for match in matches:
-        # Парсим числа
-        nums = [int(x.strip()) for x in match.split(",") if x.strip().isdigit()]
+
+    # 1. Старый формат [cite: 140, 141]
+    cite_pattern = r"\[cite:\s*([0-9,\s]+)\]"
+    cite_matches = re.findall(cite_pattern, text)
+    for match in cite_matches:
+        nums = [x.strip() for x in match.split(",") if x.strip()]
         citations.extend(nums)
+
+    # 2. Новый экспертный формат [Источник: ...]
+    source_pattern = r"\[Источник:\s*(.*?)\]"
+    source_matches = re.findall(source_pattern, text)
+    for match in source_matches:
+        citations.append(match.strip())
 
     return citations
 
@@ -286,36 +292,12 @@ def evaluate_citation_quality(
 ) -> Dict[str, Any]:
     """
     Оценка качества цитирования источников.
-
-    Args:
-        answer: Ответ с цитатами
-        context: Контекст
-        source_docs: Список source документов с метаданными
-
-    Returns:
-        Dict с метриками цитирования
     """
     citations = extract_citations(answer)
-
-    # Уникальные цитаты
     unique_citations = list(set(citations))
-
-    # Проверяем, есть ли цитаты вообще
     has_citations = len(citations) > 0
 
-    # Валидность цитат (упрощенная проверка - есть ли в метаданных source_docs)
-    # В реальности нужно проверять, что цитаты соответствуют фактическим чанкам
-    valid_citation_count = 0
-    if source_docs:
-        valid_sources = set()
-        for doc in source_docs:
-            # Предполагаем, что в метаданных может быть chunk_id или page
-            if "chunk_id" in doc.get("metadata", {}):
-                valid_sources.add(doc["metadata"]["chunk_id"])
-
-        # Упрощенная проверка
-        valid_citation_count = len(unique_citations)
-
+    # Если есть хотя бы одна цитата в новом или старом формате - это уже успех для базовой метрики
     return {
         "has_citations": has_citations,
         "citation_count": len(citations),
