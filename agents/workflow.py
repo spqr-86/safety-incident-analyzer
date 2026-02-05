@@ -8,7 +8,7 @@ from .relevance_checker import RelevanceChecker
 from .research_agent import ResearchAgent
 from .verification_agent import VerificationAgent
 
-MAX_RERUNS = 2
+MAX_RERUNS = 3
 TOPK_DOCS_FOR_AGENTS = 12  # Увеличено до лимита реранкера
 
 
@@ -35,6 +35,7 @@ class AgentWorkflow:
         wf.add_node("check_relevance", self._check_relevance_step)
         wf.add_node("research", self._research_step)
         wf.add_node("verify", self._verification_step)
+        wf.add_node("finalize_partial", self._finalize_partial_step)
         wf.set_entry_point("check_relevance")
         wf.add_conditional_edges(
             "check_relevance",
@@ -43,8 +44,15 @@ class AgentWorkflow:
         )
         wf.add_edge("research", "verify")
         wf.add_conditional_edges(
-            "verify", self._decide_next_step, {"re_research": "research", "end": END}
+            "verify",
+            self._decide_next_step,
+            {
+                "re_research": "research",
+                "finalize_partial": "finalize_partial",
+                "end": END,
+            },
         )
+        wf.add_edge("finalize_partial", END)
         return wf.compile()
 
     def full_pipeline(self, question: str, retriever: BaseRetriever):
@@ -59,7 +67,10 @@ class AgentWorkflow:
             "retriever": retriever,
             "loops": 0,
         }
-        final_state = self.compiled_workflow.invoke(initial_state)
+        # Use a high recursion limit to allow for the explicit loop counter to control flow
+        final_state = self.compiled_workflow.invoke(
+            initial_state, {"recursion_limit": 50}
+        )
         return {
             "draft_answer": final_state["draft_answer"],
             "research_thought": final_state.get("research_thought", ""),
@@ -91,11 +102,20 @@ class AgentWorkflow:
         res = self.verifier.check(state["draft_answer"], state["documents"])
         return {"verification_report": res["verification_report"]}
 
+    def _finalize_partial_step(self, state: AgentState) -> Dict:
+        return {
+            "draft_answer": state["draft_answer"]
+            + "\n\n(Примечание: Ответ может быть неполным или содержать неподтвержденные детали, так как полная верификация не была пройдена)."
+        }
+
     def _decide_next_step(self, state: AgentState) -> str:
         report = state["verification_report"]
         needs_rerun = ("**Supported:** NO" in report) or ("**Relevant:** NO" in report)
-        if needs_rerun and state["loops"] < MAX_RERUNS:
-            # в идеале — сузить вопрос: извлечь из отчёта проблемные утверждения и уточнить промпт
-            state["loops"] += 1
-            return "re_research"
+        if needs_rerun:
+            if state["loops"] < MAX_RERUNS:
+                # в идеале — сузить вопрос: извлечь из отчёта проблемные утверждения и уточнить промпт
+                state["loops"] += 1
+                return "re_research"
+            else:
+                return "finalize_partial"
         return "end"
