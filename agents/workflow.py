@@ -100,7 +100,11 @@ class AgentWorkflow:
 
     def _verification_step(self, state: AgentState) -> Dict:
         res = self.verifier.check(state["draft_answer"], state["documents"])
-        return {"verification_report": res["verification_report"]}
+        # Increment loop counter here to ensure state update persists in LangGraph
+        return {
+            "verification_report": res["verification_report"],
+            "loops": state["loops"] + 1,
+        }
 
     def _finalize_partial_step(self, state: AgentState) -> Dict:
         return {
@@ -114,7 +118,6 @@ class AgentWorkflow:
         if needs_rerun:
             if state["loops"] < MAX_RERUNS:
                 # в идеале — сузить вопрос: извлечь из отчёта проблемные утверждения и уточнить промпт
-                state["loops"] += 1
                 return "re_research"
             else:
                 return "finalize_partial"
