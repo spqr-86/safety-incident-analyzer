@@ -172,10 +172,25 @@ class DocumentProcessor:
         if not md or not md.strip():
             raise ValueError(f"Empty markdown after conversion for '{display_name}'")
 
-        # Превращаем "46.\n" в "### Пункт 46\n"
+        # 1. Превращаем "46.\n" в "### Пункт 46\n"
         md = re.sub(r"^(\d+)\.\s*$", r"### Пункт \1", md, flags=re.MULTILINE)
-        # Если пункты идут с текстом "46. Текст", то так:
+
+        # 2. Исправляем "46. Текст" -> "### Пункт 46. Текст" (если это заголовок пункта)
         md = re.sub(r"^(\d+)\.\s+(?=[А-Я])", r"### Пункт \1. ", md, flags=re.MULTILINE)
+
+        # 3. Дополнительно: ловим "53. Обучению подлежат:" и подобные конструкции
+        md = re.sub(
+            r"^(\d+)\.\s+([А-Яа-я\s]+:)$", r"### Пункт \1. \2", md, flags=re.MULTILINE
+        )
+
+        # 4. Header Healing: Промоушен римских разделов "IX. ТРЕБОВАНИЯ..." -> "## Раздел IX. ТРЕБОВАНИЯ..."
+        # Это лечит ошибку, когда сплиттер пропускает разделы без решеток
+        md = re.sub(
+            r"^(?P<roman>I|V|X|L|C|D|M|[IVXLCDM]+)\.\s+(?P<title>[А-Я\s]{5,})$",
+            r"## Раздел \g<roman>. \g<title>",
+            md,
+            flags=re.MULTILINE,
+        )
 
         return md
 
@@ -190,17 +205,26 @@ class DocumentProcessor:
         for sec in md_sections:
             # Извлекаем иерархию из метаданных
             section = sec.metadata.get("Section", "")
+            subsection = sec.metadata.get("SubSection", "")
             paragraph = sec.metadata.get("Paragraph", "")
 
             # 2. ФОРМИРУЕМ ПРЕФИКС КОНТЕКСТА
-            context_prefix = f"Документ: {source}\n"
+            # Собираем полный путь к текущему фрагменту для точной векторизации
+            context_parts = []
             if section:
-                context_prefix += f"Раздел: {section}\n"
+                context_parts.append(section)
+            if subsection:
+                context_parts.append(subsection)
             if paragraph:
-                context_prefix += f"Контекст: {paragraph}\n"
+                context_parts.append(paragraph)
+
+            header_context = " > ".join(context_parts)
+            context_prefix = f"Документ: {source}\n"
+            if header_context:
+                context_prefix += f"Контекст: {header_context}\n"
             context_prefix += "Содержание: "
 
-            # Обогащаем контент
+            # Обогащаем контент: "впекаем" путь в начало текста
             enriched_content = context_prefix + sec.page_content
 
             # 3. Рекурсивно режем уже обогащенный текст
@@ -211,6 +235,7 @@ class DocumentProcessor:
                     "file_hash": file_hash,
                     "pipeline_version": PIPELINE_VERSION,
                     "content_type": "markdown",
+                    "header_context": header_context,  # Сохраняем и в метаданных тоже
                 }
             )
 
