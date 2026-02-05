@@ -20,8 +20,10 @@ ultimate_chain:
   active_version: "v1"
   versions:
     v1: "chains/ultimate_v1.j2"
+    v2: "chains/ultimate_v2.j2"
 
 final_chain:
   active_version: "v1"
   versions:
     v1: "chains/ultimate_v1.j2"
+    v2: "chains/ultimate_v2.j2"
