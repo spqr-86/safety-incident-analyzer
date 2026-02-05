@@ -25,7 +25,7 @@ FileLike = Union[str, os.PathLike, io.BufferedIOBase, io.BytesIO, io.StringIO]
 
 
 # ⚙️ меняй это при изменении пайплайна (заголовки, сплиттеры и т.д.)
-PIPELINE_VERSION = "v1.3-md-headers+recursive-split"
+PIPELINE_VERSION = "v1.4-context-injection"
 
 
 @dataclass
