@@ -32,18 +32,21 @@ sequenceDiagram
         Workflow-->>User: Отказ
     else Relevant
         Relevance-->>Workflow: CAN_ANSWER / PARTIAL
-        loop Research Loop (Max 1)
-            Workflow->>Research: Поиск и генерация (CoT)
-            Note right of Research: Анализ в <thought>, ответ в <answer>
+        loop Research Loop (Max 3)
+            Workflow->>Research: Поиск и генерация (CoT + Normative Filter)
+            Note right of Research: Анализ Found/Not Found, ответ в <answer>
             Research-->>Workflow: Черновик ответа + Ход мыслей
-            Workflow->>Verify: Проверка фактов
+            Workflow->>Verify: Проверка фактов и логики
             alt Good
                 Verify-->>Workflow: CORRECT
                 Workflow-->>User: Финальный ответ + Chain-of-Thought
             else Bad
-                Verify-->>Workflow: REVISE (Замечания)
-                Note right of Workflow: Возврат на доработку
+                Verify-->>Workflow: REVISE (Замечания + Logic Leap Check)
+                Note right of Workflow: Возврат на доработку (increment loops)
             end
+        end
+        alt Max Loops Reached
+            Workflow-->>User: Ответ (Partial) + Оговорка о верификации
         end
     end
 ```
@@ -53,10 +56,20 @@ sequenceDiagram
 | Step | Component | Action |
 |------|-----------|--------|
 | 1. Ingestion | `index.py` | Загрузка и индексация документов в ChromaDB |
-| 2. Retrieval | `src/final_chain.py` | Поиск релевантных чанков (Hybrid K=40 + Rerank Top-20) |
-| 3. Relevance Check | `agents/relevance_checker.py` | Классификация вопроса с использованием CoT |
-| 4. Generation | `agents/research_agent.py` | Генерация ответа в тегах `<answer>` после размышлений в `<thought>` |
-| 5. Verification | `agents/verification_agent.py` | Проверка фактов в формате JSON с поддержкой логического вывода |
+| 2. Retrieval | `src/final_chain.py` | Гибридный поиск с `ApplicabilityAwareRetriever` (расширение запроса для общих норм) |
+| 3. Relevance Check | `agents/relevance_checker.py` | Классификация вопроса с использованием CoT (CAN_ANSWER/PARTIAL/NO) |
+| 4. Generation | `agents/research_agent.py` | Фильтрация атрибутов (Normative Accuracy), генерация ответа в `<answer>` |
+| 5. Verification | `agents/verification_agent.py` | Проверка на галлюцинации и "Logic Leaps", возврат фидбека (макс 3 итерации) |
+
+---
+
+## 🛡️ Философия "Нормативной точности"
+
+Система действует как строгое "нормативное зеркало". Она не пытается угадать намерения пользователя, а отражает только те факты, которые явно прописаны в нормах:
+
+1.  **Фильтрация атрибутов**: Разделение запроса на нормативно значимые термины ( Found) и "бытовой шум" (Not Found).
+2.  **Запрет на домысливание**: Мы не приравниваем "бухгалтера" к "офису", если это не написано в документе. Мы отвечаем: "Для бухгалтера норм нет. Общие нормы для ПЭВМ такие: ...".
+3.  **Стабилизация графа**: Счетчик `loops` вынесен в узел графа, что гарантирует сохранение состояния и корректную остановку цикла после 3 попыток.
 
 ---
 

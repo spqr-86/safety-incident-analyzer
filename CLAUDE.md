@@ -272,5 +272,5 @@ Edit `src/final_chain.py`:
 - **GigaChat Default**: GigaChat performs better on Russian legal text than GPT-4
 - **Reindexing**: Run `python index.py` after adding documents to `source_docs/`
 - **FlashRank Performance**: CPU-intensive; expect 2-3s latency on reranking
-- **Max Reruns**: Verification agent allows 2 revision loops before returning final answer
+- **Max Reruns**: Verification agent allows 3 revision loops before returning final answer (partial answer if still fails)
 - **Test Data**: Keep `tests/dataset.csv` updated when adding new domain knowledge
