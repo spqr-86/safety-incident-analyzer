@@ -5,7 +5,7 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores import VectorStore
-from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import Runnable
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.retrievers import BM25Retriever
@@ -16,7 +16,7 @@ from .prompt_manager import PromptManager
 class ApplicabilityRetriever(BaseRetriever):
     vector_store: VectorStore
     bm25_retriever: BM25Retriever
-    llm: BaseChatModel  # LLM для генерации вариаций запроса
+    llm: Any  # Changed to Any to avoid Pydantic validation issues with RunnableRetry
     search_kwargs: Dict[str, Any] = {"k": 10}
     weights: List[float] = [0.6, 0.4]  # Semantic, Keyword
 
@@ -42,7 +42,10 @@ class ApplicabilityRetriever(BaseRetriever):
             return [original_query]
 
     def _get_relevant_documents(
-        self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
+        self,
+        query: str,
+        *,
+        run_manager: Optional[CallbackManagerForRetrieverRun] = None,
     ) -> List[Document]:
         # 1. Генерация вариаций (Multi-Query)
         queries = self._generate_queries(query)
