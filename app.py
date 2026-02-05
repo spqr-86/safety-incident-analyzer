@@ -127,20 +127,20 @@ def load_resources():
         settings.CHROMA_DB_PATH
     ):
         st.error("База данных не найдена. Запустите 'python index.py' для её создания.")
-        return None, None
+        return None, None, None
 
     try:
         chain, retriever = create_final_hybrid_chain()
     except Exception as e:
         st.error(f"Произошла ошибка при подготовке RAG-цепочки: {e}")
-        return None, None
+        return None, None, None
 
     wf = AgentWorkflow() if MAS_AVAILABLE else None
     return (chain, retriever, wf)
 
 
 loaded = load_resources()
-if not loaded:
+if not loaded or loaded[0] is None:
     st.warning("Приложение не может быть запущено…")
     st.stop()
 
