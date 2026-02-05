@@ -4,6 +4,7 @@ import hashlib
 import io
 import os
 import pickle
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,13 +49,17 @@ class DocumentProcessor:
         chunk_size: Optional[int] = None,
         chunk_overlap: Optional[int] = None,
     ):
-        self.headers = headers or [("#", "Header 1"), ("##", "Header 2")]
+        self.headers = headers or [
+            ("#", "Section"),
+            ("##", "SubSection"),
+            ("###", "Paragraph"),
+        ]
         self.cache_dir = Path(settings.CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # берём из настроек, но можно переопределить аргументами
-        self.chunk_size = chunk_size or getattr(settings, "CHUNK_SIZE", 1200)
-        self.chunk_overlap = chunk_overlap or getattr(settings, "CHUNK_OVERLAP", 150)
+        self.chunk_size = chunk_size or getattr(settings, "CHUNK_SIZE", 1500)
+        self.chunk_overlap = chunk_overlap or getattr(settings, "CHUNK_OVERLAP", 400)
 
         # ленивые инстансы
         self._docling = DocumentConverter()
@@ -64,7 +69,16 @@ class DocumentProcessor:
         self._recursive_splitter = RecursiveCharacterTextSplitter(
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            separators=["\n\n", "\n", ". ", " ", ""],
+            separators=[
+                "\n### ",  # Новые пункты
+                "\n\n",  # Абзацы
+                "\n[а-я]\\)\\s",  # Подпункты а), б), в) - РЕГУЛЯРКА
+                "\n",
+                ". ",
+                " ",
+                "",
+            ],
+            is_separator_regex=True,
         )
 
     # ---------- публичные методы ----------
@@ -158,18 +172,38 @@ class DocumentProcessor:
         if not md or not md.strip():
             raise ValueError(f"Empty markdown after conversion for '{display_name}'")
 
+        # Превращаем "46.\n" в "### Пункт 46\n"
+        md = re.sub(r"^(\d+)\.\s*$", r"### Пункт \1", md, flags=re.MULTILINE)
+        # Если пункты идут с текстом "46. Текст", то так:
+        md = re.sub(r"^(\d+)\.\s+(?=[А-Я])", r"### Пункт \1. ", md, flags=re.MULTILINE)
+
         return md
 
     def _split_markdown(
         self, markdown: str, source: str, file_hash: str
     ) -> List[Document]:
-        """Сначала режем по заголовкам, потом — рекурсивно на удобные куски."""
+        """Сначала режем по заголовкам, потом — рекурсивно на удобные куски с инъекцией контекста."""
+        # 1. Режем на крупные куски по заголовкам
         md_sections = self._md_splitter.split_text(markdown)
-
-        # у MarkdownHeaderTextSplitter уже Documents, но они могут быть крупными
         expanded: List[Document] = []
+
         for sec in md_sections:
-            # сохранём исходные header-метаданные
+            # Извлекаем иерархию из метаданных
+            section = sec.metadata.get("Section", "")
+            paragraph = sec.metadata.get("Paragraph", "")
+
+            # 2. ФОРМИРУЕМ ПРЕФИКС КОНТЕКСТА
+            context_prefix = f"Документ: {source}\n"
+            if section:
+                context_prefix += f"Раздел: {section}\n"
+            if paragraph:
+                context_prefix += f"Контекст: {paragraph}\n"
+            context_prefix += "Содержание: "
+
+            # Обогащаем контент
+            enriched_content = context_prefix + sec.page_content
+
+            # 3. Рекурсивно режем уже обогащенный текст
             meta = dict(sec.metadata or {})
             meta.update(
                 {
@@ -177,14 +211,12 @@ class DocumentProcessor:
                     "file_hash": file_hash,
                     "pipeline_version": PIPELINE_VERSION,
                     "content_type": "markdown",
-                    "section_headers": {
-                        k: v for k, v in meta.items() if k.startswith("Header")
-                    },
                 }
             )
-            # второй сплит по длине
+
+            # Передаем список из одного Document с обогащенным текстом
             sub_docs = self._recursive_splitter.split_documents(
-                [Document(page_content=sec.page_content, metadata=meta)]
+                [Document(page_content=enriched_content, metadata=meta)]
             )
             expanded.extend(sub_docs)
 

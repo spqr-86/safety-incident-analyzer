@@ -55,7 +55,7 @@ sequenceDiagram
 
 | Step | Component | Action |
 |------|-----------|--------|
-| 1. Ingestion | `index.py` | Загрузка и индексация документов в ChromaDB |
+| 1. Ingestion | `index.py` | Загрузка и индексация документов в ChromaDB. См. [DATA_PIPELINE.md](../DATA_PIPELINE.md) |
 | 2. Retrieval | `src/final_chain.py` | Гибридный поиск с `ApplicabilityAwareRetriever` (расширение запроса для общих норм) |
 | 3. Relevance Check | `agents/relevance_checker.py` | Классификация вопроса с использованием CoT (CAN_ANSWER/PARTIAL/NO) |
 | 4. Generation | `agents/research_agent.py` | Фильтрация атрибутов (Normative Accuracy), генерация ответа в `<answer>` |

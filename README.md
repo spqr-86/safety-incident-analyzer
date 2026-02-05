@@ -113,6 +113,7 @@ streamlit run app.py
 
 ### 🛠 Для разработчиков
 - [**Архитектура и анализ кодовой базы**](./docs/architecture/README.md)
+- [**Data Pipeline (Обработка данных)**](./docs/DATA_PIPELINE.md) — **NEW!** Детальное описание процесса индексации.
 - [**Гайд по тестированию**](./docs/guides/testing.md)
 - [**Управление промптами**](./docs/guides/prompt-management.md) — руководство по работе с системой промптов.
 - [**Как добавлять вопросы в датасет**](./docs/guides/adding-questions.md)
