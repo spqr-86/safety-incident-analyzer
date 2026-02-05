@@ -5,67 +5,70 @@ from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores import VectorStore
+from langchain_core.language_models import BaseChatModel
+from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from langchain_community.retrievers import BM25Retriever
+
+from .prompt_manager import PromptManager
 
 
 class ApplicabilityRetriever(BaseRetriever):
     vector_store: VectorStore
     bm25_retriever: BM25Retriever
+    llm: BaseChatModel  # LLM для генерации вариаций запроса
     search_kwargs: Dict[str, Any] = {"k": 10}
     weights: List[float] = [0.6, 0.4]  # Semantic, Keyword
 
-    def _extract_params(self, query: str) -> str:
-        # Simple heuristic extraction for now
-        # In a full implementation, this would use a fast NER or keyword matcher
-        roles = r"(водитель|сварщик|электрик|слесарь|руководитель|мастер|директор|бухгалтер|оператор|работник)"
-        works = r"(сварка|высот[ае]|погрузк|ремонт|осмотр|монтаж|очистк|уборк)"
-        premises = r"(цех|склад|кабинет|офис|территори|помещени)"
+    def _generate_queries(self, original_query: str) -> List[str]:
+        """Генерирует вариации поискового запроса с помощью LLM."""
+        prompt_manager = PromptManager()
+        try:
+            prompt_str = prompt_manager.render(
+                "applicability_retriever", question=original_query
+            )
+            prompt = PromptTemplate.from_template(prompt_str)
+            chain = prompt | self.llm | StrOutputParser()
+            result = chain.invoke({})
 
-        found_roles = re.findall(roles, query, re.IGNORECASE)
-        found_works = re.findall(works, query, re.IGNORECASE)
-        found_premises = re.findall(premises, query, re.IGNORECASE)
-
-        parts = []
-        if found_roles:
-            parts.extend(found_roles)
-        if found_works:
-            parts.extend(found_works)
-        if found_premises:
-            parts.extend(found_premises)
-
-        return " ".join(parts)
-
-    def _get_applicability_query(self, query: str) -> str:
-        extracted = self._extract_params(query)
-        if not extracted:
-            # Fallback to general norms
-            return "общие требования охраны труда обязанности работника права и ответственность"
-        else:
-            # Boost specific params
-            return f"требования безопасности {extracted}"
+            # Разбираем ответ: ожидаем 3 строки
+            queries = [q.strip() for q in result.split("\n") if q.strip()]
+            # Добавляем оригинал, если его нет
+            if original_query not in queries:
+                queries.insert(0, original_query)
+            return queries[:4]  # Ограничиваем сверху
+        except Exception:
+            # Fallback если LLM сломалась или промпт не найден
+            return [original_query]
 
     def _get_relevant_documents(
         self, query: str, *, run_manager: CallbackManagerForRetrieverRun = None
     ) -> List[Document]:
-        # 1. Topic Query (Semantic + Keyword)
-        docs_topic_semantic = self.vector_store.similarity_search(
-            query, **self.search_kwargs
-        )
-        docs_topic_keyword = self.bm25_retriever.invoke(query)
+        # 1. Генерация вариаций (Multi-Query)
+        queries = self._generate_queries(query)
+        # print(f"DEBUG: Generated queries: {queries}")  # Можно раскомментировать для отладки
 
-        # 2. Applicability Query (Semantic only usually enough, or reuse BM25)
-        app_query = self._get_applicability_query(query)
-        docs_app_semantic = self.vector_store.similarity_search(
-            app_query, **self.search_kwargs
-        )
+        all_docs = []
 
-        # Combine and deduplicate
-        all_docs = docs_topic_semantic + docs_topic_keyword + docs_app_semantic
+        # 2. Параллельный поиск
+        for q in queries:
+            # Semantic Search для каждой вариации
+            docs_semantic = self.vector_store.similarity_search(q, **self.search_kwargs)
+            all_docs.extend(docs_semantic)
+
+        # BM25 ищем только по оригиналу (ключевые слова важны именно пользовательские)
+        # или можно добавить первую (legal) вариацию, если хочется
+        docs_keyword = self.bm25_retriever.invoke(query)
+        all_docs.extend(docs_keyword)
+
+        # 3. Дедупликация (Reciprocal Rank Fusion не делаем, просто уникальность)
         unique_docs = {}
         for doc in all_docs:
-            # Use page_content as key for deduplication (or source+page if available)
-            # Assuming content uniqueness is good enough proxy
-            key = doc.page_content[:100]  # Hash/key by prefix or full content
+            # Используем хэш контента как ключ
+            # (chunk_id в метаданных был бы идеален, но полагаемся на контент)
+            key = doc.page_content[
+                :200
+            ]  # Хэш по началу текста (заголовок + часть тела)
             if key not in unique_docs:
                 unique_docs[key] = doc
 

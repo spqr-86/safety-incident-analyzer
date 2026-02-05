@@ -46,6 +46,7 @@ def create_final_hybrid_chain():
     ensemble_retriever = ApplicabilityRetriever(
         vector_store=vector_store,
         bm25_retriever=keyword_retriever,
+        llm=get_llm(),  # Передаем LLM для генерации вариаций запроса
         search_kwargs={"k": settings.VECTOR_SEARCH_K},
     )
 

@@ -22,8 +22,8 @@ ultimate_chain:
     v1: "chains/ultimate_v1.j2"
     v2: "chains/ultimate_v2.j2"
 
-final_chain:
+applicability_retriever:
   active_version: "v1"
   versions:
-    v1: "chains/ultimate_v1.j2"
-    v2: "chains/ultimate_v2.j2"
+    v1: "agents/query_expansion_v1.j2"
+
