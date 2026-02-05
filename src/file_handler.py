@@ -203,29 +203,10 @@ class DocumentProcessor:
         expanded: List[Document] = []
 
         for sec in md_sections:
-            # Извлекаем иерархию из метаданных
-            section = sec.metadata.get("Section", "")
-            subsection = sec.metadata.get("SubSection", "")
-            paragraph = sec.metadata.get("Paragraph", "")
-
-            # 2. ФОРМИРУЕМ ПРЕФИКС КОНТЕКСТА
-            # Собираем полный путь к текущему фрагменту для точной векторизации
-            context_parts = []
-            if section:
-                context_parts.append(section)
-            if subsection:
-                context_parts.append(subsection)
-            if paragraph:
-                context_parts.append(paragraph)
-
-            header_context = " > ".join(context_parts)
-            context_prefix = f"Документ: {source}\n"
-            if header_context:
-                context_prefix += f"Контекст: {header_context}\n"
-            context_prefix += "Содержание: "
-
-            # Обогащаем контент: "впекаем" путь в начало текста
-            enriched_content = context_prefix + sec.page_content
+            # 2. ФОРМИРУЕМ ПРЕФИКС КОНТЕКСТА (вынесено в отдельный метод)
+            enriched_content, header_context = self._enrich_chunk_with_context(
+                sec.page_content, source, sec.metadata
+            )
 
             # 3. Рекурсивно режем уже обогащенный текст
             meta = dict(sec.metadata or {})
@@ -250,6 +231,36 @@ class DocumentProcessor:
             d.metadata["chunk_id"] = i
 
         return expanded
+
+    def _enrich_chunk_with_context(
+        self, content: str, source: str, metadata: dict
+    ) -> Tuple[str, str]:
+        """
+        Внедрение контекста (Context Injection):
+        Берет заголовки из метаданных и пишет их первой строчкой в тексте чанка.
+        """
+        section = metadata.get("Section", "")
+        subsection = metadata.get("SubSection", "")
+        paragraph = metadata.get("Paragraph", "")
+
+        # Собираем полный путь к текущему фрагменту для точной векторизации
+        context_parts = []
+        if section:
+            context_parts.append(section)
+        if subsection:
+            context_parts.append(subsection)
+        if paragraph:
+            context_parts.append(paragraph)
+
+        header_context = " > ".join(context_parts)
+        context_prefix = f"Документ: {source}\n"
+        if header_context:
+            context_prefix += f"Контекст: {header_context}\n"
+        context_prefix += "Содержание: "
+
+        # Обогащаем контент: "впекаем" путь в начало текста
+        enriched_content = context_prefix + content
+        return enriched_content, header_context
 
     # ---------- кэш ----------
 
