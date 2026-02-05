@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage
 
 from config.settings import settings
 
+from .applicability_retriever import ApplicabilityRetriever
 from .llm_factory import get_llm
 from .vector_store import load_vector_store
 from .prompt_manager import PromptManager
@@ -40,10 +41,12 @@ def create_final_hybrid_chain():
     keyword_retriever = BM25Retriever.from_documents(all_docs_as_objects)
     keyword_retriever.k = settings.VECTOR_SEARCH_K
 
-    # 4) Ансамбль
-    ensemble_retriever = EnsembleRetriever(
-        retrievers=[semantic_retriever, keyword_retriever],
-        weights=settings.HYBRID_RETRIEVER_WEIGHTS,
+    # 4) Applicability Retriever (вместо обычного Ensemble)
+    # Объединяет Topic Query (Semantic+BM25) и Applicability Query (Semantic)
+    ensemble_retriever = ApplicabilityRetriever(
+        vector_store=vector_store,
+        bm25_retriever=keyword_retriever,
+        search_kwargs={"k": settings.VECTOR_SEARCH_K},
     )
 
     # 5) Реранкер FlashRank
