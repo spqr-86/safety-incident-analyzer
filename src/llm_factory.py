@@ -50,6 +50,31 @@ def get_llm():
     return llm.with_retry(stop_after_attempt=3, wait_exponential_jitter=True)
 
 
+def get_vision_llm():
+    """
+    Возвращает LLM с поддержкой Vision (зрения).
+    Используется для анализа скриншотов документов.
+    """
+    provider = settings.LLM_PROVIDER.lower()
+    
+    if provider == "openai":
+        # Принудительно используем модель с поддержкой Vision (gpt-4o)
+        # даже если основная модель другая.
+        return ChatOpenAI(
+            model="gpt-4o", 
+            temperature=0.0,
+            max_tokens=1024,
+            timeout=settings.REQUEST_TIMEOUT,
+        )
+    
+    if provider == "gigachat":
+        # Для GigaChat возвращаем основную модель.
+        # Внимание: требуется GigaChat-Pro/Max для работы с изображениями.
+        return get_llm()
+        
+    raise ValueError(f"Провайдер {provider} не поддерживает Vision (или не настроен).")
+
+
 def get_embedding_model():
     provider = (settings.EMBEDDING_PROVIDER or "").lower()
     model = settings.EMBEDDING_MODEL_NAME

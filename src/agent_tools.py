@@ -1,11 +1,14 @@
 import json
+import base64
 import fitz  # pymupdf
 from pathlib import Path
 from typing import List, Optional
 from langchain_core.tools import tool
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.messages import HumanMessage
 
 from config.settings import settings
+from src.llm_factory import get_vision_llm
 
 # Global retriever reference (will be set during init)
 _retriever: Optional[BaseRetriever] = None
@@ -50,23 +53,21 @@ def search_documents(query: str) -> str:
 
 
 @tool
-def visual_proof(file_name: str, page_no: int, bbox: List[float]) -> str:
+def visual_proof(file_name: str, page_no: int, bbox: List[float], mode: str = "show") -> str:
     """
-    Generate a visual proof (image) from a document using the provided coordinates.
+    Generate a visual proof (image) or analyze the visual content using AI (VLM).
 
     Args:
         file_name: The source file name (e.g., 'safety.pdf').
         page_no: The page number (1-based).
         bbox: The bounding box [left, top, right, bottom] from the search results.
+        mode: "show" to return an image file path (default), or "analyze" to interpret the image content (e.g. for complex tables).
 
     Returns:
-        Path to the generated image file.
+        Path to the generated image file (mode="show") or text description (mode="analyze").
     """
     try:
         # Resolve file path
-        # Assuming source_docs are in a known location or we scan for them
-        # For simplicity, we assume they are in 'source_docs/' relative to project root
-        # OR we might need a mapping. Let's assume flat structure in source_docs/
         source_path = Path("source_docs") / file_name
 
         if not source_path.exists():
@@ -78,47 +79,17 @@ def visual_proof(file_name: str, page_no: int, bbox: List[float]) -> str:
 
         page = doc[page_no - 1]
 
-        # BBox format: [l, t, r, b]
-        # PyMuPDF expects Rect(x0, y0, x1, y1)
-        # We need to handle potential coordinate system mismatch if necessary
-        # But earlier test showed [l, t, r, b] where t > b (PDF coords).
-        # PyMuPDF uses Top-Left origin (y grows down).
-        # PDF uses Bottom-Left origin (y grows up).
-        # So we might need to flip Y.
-        # Page height is page.rect.height
-
         l, t, r, b = bbox
 
-        # Check if coordinates look like PDF (bottom-left)
-        # If t > b, it's likely PDF coordinates.
+        # Check if coordinates look like PDF (bottom-left) and flip if needed
+        # Docling output usually [l, t, r, b] where t > b means PDF coords
         if t > b:
-            # Convert to PyMuPDF (Top-Left)
-            # y_new = height - y_old
             height = page.rect.height
-
-            # PDF Top (t) is distance from bottom.
-            # PyMuPDF Top (y0) is distance from top.
-            # y0 = height - t
-            # y1 = height - b
-
-            # Wait, PDF convention:
-            # (0,0) is bottom-left.
-            # t=50 means 50 units from bottom?
-            # Or does Docling return (l, b, r, t)?
-            # My test showed [10, 50, 200, 30]. t=50, b=30.
-            # In PDF, y=50 is higher than y=30.
-            # So top edge is y=50, bottom edge is y=30.
-            # To convert to Top-Left:
-            # y0 (top edge) = PageHeight - 50
-            # y1 (bottom edge) = PageHeight - 30
-
             y0 = height - t
             y1 = height - b
-
             # Fix order for Rect (y0 < y1)
             rect = fitz.Rect(l, y0, r, y1)
         else:
-            # Assumed valid Top-Left coordinates
             rect = fitz.Rect(l, t, r, b)
 
         # Add padding
@@ -128,9 +99,27 @@ def visual_proof(file_name: str, page_no: int, bbox: List[float]) -> str:
         rect.x1 = min(page.rect.width, rect.x1 + padding)
         rect.y1 = min(page.rect.height, rect.y1 + padding)
 
-        # Render
-        pix = page.get_pixmap(clip=rect, dpi=150)
+        # Render (higher DPI for analysis)
+        dpi = 200 if mode == "analyze" else 150
+        pix = page.get_pixmap(clip=rect, dpi=dpi)
 
+        # --- Mode: Analyze (VLM) ---
+        if mode == "analyze":
+            try:
+                img_data = pix.tobytes("png")
+                b64_img = base64.b64encode(img_data).decode("utf-8")
+                
+                vlm = get_vision_llm()
+                msg = HumanMessage(content=[
+                    {"type": "text", "text": "Analyze this document fragment carefully. If it is a table or diagram, transcribe its structure and data accurately. If it is text, verify the reading. Output ONLY the content description."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}}
+                ])
+                response = vlm.invoke([msg])
+                return f"[Visual Analysis Result]\n{response.content}"
+            except Exception as e:
+                return f"Error in VLM analysis: {str(e)}"
+
+        # --- Mode: Show (Default) ---
         # Save
         output_dir = Path("static/visuals")
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -147,4 +136,4 @@ def visual_proof(file_name: str, page_no: int, bbox: List[float]) -> str:
         return str(output_path)
 
     except Exception as e:
-        return f"Error generating visual proof: {str(e)}"
+        return f"Error processing visual proof: {str(e)}"
