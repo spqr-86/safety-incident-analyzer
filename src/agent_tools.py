@@ -53,7 +53,9 @@ def search_documents(query: str) -> str:
 
 
 @tool
-def visual_proof(file_name: str, page_no: int, bbox: List[float], mode: str = "show") -> str:
+def visual_proof(
+    file_name: str, page_no: int, bbox: List[float], mode: str = "show"
+) -> str:
     """
     Generate a visual proof (image) or analyze the visual content using AI (VLM).
 
@@ -82,7 +84,6 @@ def visual_proof(file_name: str, page_no: int, bbox: List[float], mode: str = "s
         l, t, r, b = bbox
 
         # Check if coordinates look like PDF (bottom-left) and flip if needed
-        # Docling output usually [l, t, r, b] where t > b means PDF coords
         if t > b:
             height = page.rect.height
             y0 = height - t
@@ -108,12 +109,27 @@ def visual_proof(file_name: str, page_no: int, bbox: List[float], mode: str = "s
             try:
                 img_data = pix.tobytes("png")
                 b64_img = base64.b64encode(img_data).decode("utf-8")
-                
+
                 vlm = get_vision_llm()
-                msg = HumanMessage(content=[
-                    {"type": "text", "text": "Analyze this document fragment carefully. If it is a table or diagram, transcribe its structure and data accurately. If it is text, verify the reading. Output ONLY the content description."},
-                    {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64_img}"}}
-                ])
+
+                # Strict instruction for verbatim transcription
+                prompt_text = (
+                    "Analyze this document fragment.\n"
+                    "1. Transcribe the text/table exactly as it appears in the image, in Russian.\n"
+                    "2. If it is a table, use Markdown table format.\n"
+                    "3. Do NOT summarize or explain. Return raw text only.\n"
+                    "4. If there are lists (a, b, c or 1, 2, 3), preserve the numbering."
+                )
+
+                msg = HumanMessage(
+                    content=[
+                        {"type": "text", "text": prompt_text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64_img}"},
+                        },
+                    ]
+                )
                 response = vlm.invoke([msg])
                 return f"[Visual Analysis Result]\n{response.content}"
             except Exception as e:

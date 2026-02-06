@@ -31,7 +31,7 @@ class UniversalAgent:
         # Create Graph
         # We assume the LLM supports tool calling (GigaChat or OpenAI)
         self.graph = create_react_agent(
-            self.llm, self.tools, state_modifier=self.system_message
+            self.llm, self.tools, prompt=self.system_message
         )
 
     def invoke(self, question: str) -> Dict[str, Any]:

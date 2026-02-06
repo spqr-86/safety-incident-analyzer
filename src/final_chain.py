@@ -1,7 +1,7 @@
 from operator import itemgetter
 
 from flashrank import Ranker
-from langchain.retrievers import ContextualCompressionRetriever, EnsembleRetriever
+from langchain.retrievers import ContextualCompressionRetriever
 from langchain_community.document_compressors import FlashrankRerank
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
@@ -41,21 +41,22 @@ def create_final_hybrid_chain():
     keyword_retriever = BM25Retriever.from_documents(all_docs_as_objects)
     keyword_retriever.k = settings.VECTOR_SEARCH_K
 
-    # 4) Applicability Retriever (вместо обычного Ensemble)
-    # Объединяет Topic Query (Semantic+BM25) и Applicability Query (Semantic)
+    # 4) Applicability Retriever (Умный поиск с расширением запроса)
+    # Использует LLM для генерации синонимов (Программа А -> Общие вопросы)
     ensemble_retriever = ApplicabilityRetriever(
         vector_store=vector_store,
         bm25_retriever=keyword_retriever,
-        llm=get_llm(),  # Передаем LLM для генерации вариаций запроса
+        llm=get_llm(),
         search_kwargs={"k": settings.VECTOR_SEARCH_K},
     )
 
     # 5) Реранкер FlashRank
+    # top_n=12 для широкого охвата
     flashrank_client = Ranker(
         model_name=settings.RERANKING_MODEL,
         cache_dir=getattr(settings, "FLASHRANK_CACHE_DIR", None),
     )
-    compressor = FlashrankRerank(client=flashrank_client, top_n=7)
+    compressor = FlashrankRerank(client=flashrank_client, top_n=12)
     final_retriever = ContextualCompressionRetriever(
         base_compressor=compressor, base_retriever=ensemble_retriever
     )

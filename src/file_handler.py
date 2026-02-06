@@ -39,11 +39,9 @@ class DocumentProcessor:
 
     def __init__(
         self,
-        headers: Optional[
-            List[Tuple[str, str]]
-        ] = None,  # Deprecated, kept for interface compat
-        chunk_size: Optional[int] = None,  # Deprecated
-        chunk_overlap: Optional[int] = None,  # Deprecated
+        headers: Optional[List[Tuple[str, str]]] = None, # Deprecated, kept for interface compat
+        chunk_size: Optional[int] = None, # Deprecated
+        chunk_overlap: Optional[int] = None, # Deprecated
     ):
         self.cache_dir = Path(settings.CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -78,7 +76,7 @@ class DocumentProcessor:
         for file_obj in files:
             try:
                 stream, display_name = self._get_stream_and_name(file_obj)
-
+                
                 # Хэш файла для кэша
                 file_hash = self._hash_bytes_stream(stream)
                 cache_path = self._cache_path_for(file_hash)
@@ -96,9 +94,7 @@ class DocumentProcessor:
                 for ch in chunks:
                     # Уникальность определяем по тексту + координатам (если есть)
                     # Но для простоты пока по тексту, хотя разные bbox могут иметь один текст
-                    content_hash = hashlib.sha256(
-                        ch.page_content.encode("utf-8")
-                    ).hexdigest()
+                    content_hash = hashlib.sha256(ch.page_content.encode("utf-8")).hexdigest()
                     if content_hash not in seen_chunk_hashes:
                         all_chunks.append(ch)
                         seen_chunk_hashes.add(content_hash)
@@ -127,7 +123,7 @@ class DocumentProcessor:
             stream.seek(0)
             tmp.write(stream.read())
             tmp.flush()
-
+            
             # Конвертация
             try:
                 res = self._docling.convert(tmp.name)
@@ -143,21 +139,21 @@ class DocumentProcessor:
         Сохраняем каждый элемент как Document с metadata.
         """
         chunks = []
-
-        # Итерируемся по всем текстовым элементам (заголовки, параграфы, списки)
-        # doc.texts() возвращает итератор по TextItem
-        # В новой версии Docling структура может отличаться, используем безопасный подход
-
-        # Попытка получить плоский список элементов, если поддерживается
+        
+        # Безопасное получение списка элементов
         items = []
         if hasattr(doc, "texts"):
-            items = list(doc.texts())
+            if callable(doc.texts):
+                items = list(doc.texts())
+            else:
+                # Если это свойство-список
+                items = list(doc.texts)
         elif hasattr(doc, "body") and hasattr(doc.body, "children"):
-            # Fallback: рекурсивный обход, если doc.texts() недоступен
-            items = self._flatten_items(doc.body.children)
-
+             # Fallback: рекурсивный обход
+             items = self._flatten_items(doc.body.children)
+        
         current_section = "Начало документа"
-
+        
         for i, item in enumerate(items):
             text = item.text.strip()
             if not text:
@@ -172,7 +168,7 @@ class DocumentProcessor:
                 "source": source,
                 "type": self._get_item_type(item),
                 "chunk_id": i,
-                "section_context": current_section,
+                "section_context": current_section
             }
 
             # Извлечение координат (Provenance)
@@ -181,21 +177,15 @@ class DocumentProcessor:
                 prov = item.prov[0]
                 if hasattr(prov, "bbox") and prov.bbox:
                     # Сохраняем bbox как JSON-строку для совместимости с Chroma
-                    # Формат Docling: [L, B, R, T] (обычно)
-                    # Мы просто сохраняем как есть, VisualTool разберется
-                    meta["bbox"] = json.dumps(
-                        prov.bbox.as_tuple()
-                        if hasattr(prov.bbox, "as_tuple")
-                        else prov.bbox
-                    )
-
+                    meta["bbox"] = json.dumps(prov.bbox.as_tuple() if hasattr(prov.bbox, "as_tuple") else prov.bbox)
+                
                 if hasattr(prov, "page_no"):
                     meta["page_no"] = prov.page_no
 
             # Создаем документ
             # Добавляем контекст секции в начало текста для лучшего поиска
             enriched_content = f"[{current_section}] {text}"
-
+            
             chunks.append(Document(page_content=enriched_content, metadata=meta))
 
         return chunks

@@ -26,6 +26,7 @@ def get_llm():
             model=settings.MODEL_NAME,
             temperature=settings.TEMPERATURE,
             timeout=settings.REQUEST_TIMEOUT,
+            max_retries=3,
         )
     elif provider == "gigachat":
         credentials = os.getenv("GIGACHAT_CREDENTIALS")
@@ -47,7 +48,8 @@ def get_llm():
         )
 
     # Добавляем автоматические повторы при сетевых ошибках (в т.ч. SSL)
-    return llm.with_retry(stop_after_attempt=3, wait_exponential_jitter=True)
+    # return llm.with_retry(stop_after_attempt=3, wait_exponential_jitter=True)
+    return llm
 
 
 def get_vision_llm():
@@ -56,22 +58,22 @@ def get_vision_llm():
     Используется для анализа скриншотов документов.
     """
     provider = settings.LLM_PROVIDER.lower()
-    
+
     if provider == "openai":
         # Принудительно используем модель с поддержкой Vision (gpt-4o)
         # даже если основная модель другая.
         return ChatOpenAI(
-            model="gpt-4o", 
+            model="gpt-4o",
             temperature=0.0,
             max_tokens=1024,
             timeout=settings.REQUEST_TIMEOUT,
         )
-    
+
     if provider == "gigachat":
         # Для GigaChat возвращаем основную модель.
         # Внимание: требуется GigaChat-Pro/Max для работы с изображениями.
         return get_llm()
-        
+
     raise ValueError(f"Провайдер {provider} не поддерживает Vision (или не настроен).")
 
 
