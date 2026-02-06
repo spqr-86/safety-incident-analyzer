@@ -140,3 +140,4 @@ loguru
 langgraph
 # pysqlite3-binary  # Only needed for Streamlit Cloud, not macOS
 rank_bm25
+pymupdf

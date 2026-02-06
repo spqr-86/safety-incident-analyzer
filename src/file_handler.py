@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import pickle
-import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple, Union
+from typing import Iterable, List, Optional, Tuple, Union, Any
 
 from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.document import DocItem, SectionHeaderItem, TextItem, ListItem
 from langchain.docstore.document import Document
-from langchain_text_splitters import (
-    MarkdownHeaderTextSplitter,
-    RecursiveCharacterTextSplitter,
-)
 
 from config import constants
 from config.settings import settings
@@ -23,9 +21,8 @@ from utils.logging import logger
 
 FileLike = Union[str, os.PathLike, io.BufferedIOBase, io.BytesIO, io.StringIO]
 
-
-# ⚙️ меняй это при изменении пайплайна (заголовки, сплиттеры и т.д.)
-PIPELINE_VERSION = "v1.4-context-injection"
+# ⚙️ Обновляем версию, так как формат хранения кардинально меняется
+PIPELINE_VERSION = "v2.0-visual-coords"
 
 
 @dataclass
@@ -36,61 +33,32 @@ class CacheEntry:
 
 class DocumentProcessor:
     """
-    Надёжный обработчик файлов:
-      - кэш по контенту файла и версии пайплайна
-      - поддержка path и file-like объектов
-      - двухступенчатый сплиттинг (Markdown headers -> recursive)
-      - дедупликация чанков
+    Обработчик файлов с поддержкой извлечения координат (BBox) для визуализации.
+    Использует Docling для структурного парсинга.
     """
 
     def __init__(
         self,
-        headers: Optional[List[Tuple[str, str]]] = None,
-        chunk_size: Optional[int] = None,
-        chunk_overlap: Optional[int] = None,
+        headers: Optional[
+            List[Tuple[str, str]]
+        ] = None,  # Deprecated, kept for interface compat
+        chunk_size: Optional[int] = None,  # Deprecated
+        chunk_overlap: Optional[int] = None,  # Deprecated
     ):
-        self.headers = headers or [
-            ("#", "Section"),
-            ("##", "SubSection"),
-            ("###", "Paragraph"),
-        ]
         self.cache_dir = Path(settings.CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # берём из настроек, но можно переопределить аргументами
-        self.chunk_size = chunk_size or getattr(settings, "CHUNK_SIZE", 1500)
-        self.chunk_overlap = chunk_overlap or getattr(settings, "CHUNK_OVERLAP", 400)
-
-        # ленивые инстансы
+        # Ленивая инициализация Docling
         self._docling = DocumentConverter()
-
-        # подготовим сплиттеры
-        self._md_splitter = MarkdownHeaderTextSplitter(self.headers)
-        self._recursive_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            separators=[
-                "\n### ",  # Новые пункты
-                "\n\n",  # Абзацы
-                "\n[а-я]\\)\\s",  # Подпункты а), б), в) - РЕГУЛЯРКА
-                "\n",
-                ". ",
-                " ",
-                "",
-            ],
-            is_separator_regex=True,
-        )
 
     # ---------- публичные методы ----------
 
     def validate_files(self, files: Iterable[FileLike]) -> None:
-        """Проверяет суммарный размер загружаемых файлов (где возможно)."""
+        """Проверяет суммарный размер загружаемых файлов."""
         total = 0
         for f in files:
             size = self._safe_sizeof(f)
             if size is None:
-                # не знаем размер (например, BytesIO) — пропускаем, но логируем
-                logger.debug("File size not available, skipping in total size calc.")
                 continue
             total += size
 
@@ -101,7 +69,7 @@ class DocumentProcessor:
             )
 
     def process(self, files: Iterable[FileLike]) -> List[Document]:
-        """Обработка файлов с кэшированием и дедупликацией чанков."""
+        """Обработка файлов с кэшированием."""
         self.validate_files(files)
 
         all_chunks: List[Document] = []
@@ -109,34 +77,31 @@ class DocumentProcessor:
 
         for file_obj in files:
             try:
-                # 1) получить bytes-поток и нормализованное имя
                 stream, display_name = self._get_stream_and_name(file_obj)
 
-                # 2) рассчитать контент-хэш файла потоково
+                # Хэш файла для кэша
                 file_hash = self._hash_bytes_stream(stream)
                 cache_path = self._cache_path_for(file_hash)
 
-                # 3) кэш или обработка
                 if self._is_cache_valid(cache_path):
                     logger.info(f"[cache] {display_name}")
                     chunks = self._load_from_cache(cache_path)
                 else:
                     logger.info(f"[process] {display_name}")
-                    # важно: вернуть курсор в начало перед чтением конвертером
                     stream.seek(0)
-                    markdown = self._to_markdown(stream, display_name)
-                    chunks = self._split_markdown(
-                        markdown, source=display_name, file_hash=file_hash
-                    )
+                    chunks = self._convert_and_extract(stream, display_name, file_hash)
                     self._save_to_cache(chunks, cache_path)
 
-                # 4) дедупликация чанков
+                # Дедупликация
                 for ch in chunks:
-                    norm = self._normalize_text(ch.page_content)
-                    ch_hash = hashlib.sha256(norm.encode("utf-8")).hexdigest()
-                    if ch_hash not in seen_chunk_hashes:
+                    # Уникальность определяем по тексту + координатам (если есть)
+                    # Но для простоты пока по тексту, хотя разные bbox могут иметь один текст
+                    content_hash = hashlib.sha256(
+                        ch.page_content.encode("utf-8")
+                    ).hexdigest()
+                    if content_hash not in seen_chunk_hashes:
                         all_chunks.append(ch)
-                        seen_chunk_hashes.add(ch_hash)
+                        seen_chunk_hashes.add(content_hash)
 
             except Exception as e:
                 logger.error(
@@ -148,124 +113,113 @@ class DocumentProcessor:
         logger.info(f"Total unique chunks: {len(all_chunks)}")
         return all_chunks
 
-    # ---------- конвертация и сплиттинг ----------
+    # ---------- конвертация и извлечение ----------
 
-    def _to_markdown(self, stream: io.BufferedIOBase, display_name: str) -> str:
-        """
-        Конвертация в Markdown через Docling.
-        Если понадобится — тут же можно добавить fallback на pypdf+ocr и т.п.
-        """
-        # Docling удобнее кормить как temp-файл. Сделаем NamedTemporaryFile.
+    def _convert_and_extract(
+        self, stream: io.BufferedIOBase, source_name: str, file_hash: str
+    ) -> List[Document]:
+        """Конвертация через Docling и извлечение структурных чанков."""
         import tempfile
 
-        suffix = self._suffix_from_name(display_name)
+        # Docling требует файл на диске
+        suffix = self._suffix_from_name(source_name)
         with tempfile.NamedTemporaryFile(delete=True, suffix=suffix) as tmp:
-            # скопируем поток в файл
             stream.seek(0)
             tmp.write(stream.read())
             tmp.flush()
 
-            # конвертация
-            doc = self._docling.convert(tmp.name)
-            md = doc.document.export_to_markdown()
+            # Конвертация
+            try:
+                res = self._docling.convert(tmp.name)
+            except Exception as e:
+                logger.error(f"Docling conversion failed for {source_name}: {e}")
+                return []
 
-        if not md or not md.strip():
-            raise ValueError(f"Empty markdown after conversion for '{display_name}'")
+            return self._process_docling_document(res.document, source_name)
 
-        # 1. Превращаем "46.\n" в "### Пункт 46\n"
-        md = re.sub(r"^(\d+)\.\s*$", r"### Пункт \1", md, flags=re.MULTILINE)
-
-        # 2. Исправляем "46. Текст" -> "### Пункт 46. Текст" (если это заголовок пункта)
-        md = re.sub(r"^(\d+)\.\s+(?=[А-Я])", r"### Пункт \1. ", md, flags=re.MULTILINE)
-
-        # 3. Дополнительно: ловим "53. Обучению подлежат:" и подобные конструкции
-        md = re.sub(
-            r"^(\d+)\.\s+([А-Яа-я\s]+:)$", r"### Пункт \1. \2", md, flags=re.MULTILINE
-        )
-
-        # 4. Header Healing: Промоушен римских разделов "IX. ТРЕБОВАНИЯ..." -> "## Раздел IX. ТРЕБОВАНИЯ..."
-        # Это лечит ошибку, когда сплиттер пропускает разделы без решеток
-        md = re.sub(
-            r"^(?P<roman>I|V|X|L|C|D|M|[IVXLCDM]+)\.\s+(?P<title>[А-Я\s]{5,})$",
-            r"## Раздел \g<roman>. \g<title>",
-            md,
-            flags=re.MULTILINE,
-        )
-
-        return md
-
-    def _split_markdown(
-        self, markdown: str, source: str, file_hash: str
-    ) -> List[Document]:
-        """Сначала режем по заголовкам, потом — рекурсивно на удобные куски с инъекцией контекста."""
-        # 1. Режем на крупные куски по заголовкам
-        md_sections = self._md_splitter.split_text(markdown)
-        expanded: List[Document] = []
-
-        for sec in md_sections:
-            # 2. ФОРМИРУЕМ ПРЕФИКС КОНТЕКСТА (вынесено в отдельный метод)
-            enriched_content, header_context = self._enrich_chunk_with_context(
-                sec.page_content, source, sec.metadata
-            )
-
-            # 3. Рекурсивно режем уже обогащенный текст
-            meta = dict(sec.metadata or {})
-            meta.update(
-                {
-                    "source": source,
-                    "file_hash": file_hash,
-                    "pipeline_version": PIPELINE_VERSION,
-                    "content_type": "markdown",
-                    "header_context": header_context,  # Сохраняем и в метаданных тоже
-                }
-            )
-
-            # Передаем список из одного Document с обогащенным текстом
-            sub_docs = self._recursive_splitter.split_documents(
-                [Document(page_content=enriched_content, metadata=meta)]
-            )
-            expanded.extend(sub_docs)
-
-        # финальный проход: проставим порядковые номера
-        for i, d in enumerate(expanded):
-            d.metadata["chunk_id"] = i
-
-        return expanded
-
-    def _enrich_chunk_with_context(
-        self, content: str, source: str, metadata: dict
-    ) -> Tuple[str, str]:
+    def _process_docling_document(self, doc: Any, source: str) -> List[Document]:
         """
-        Внедрение контекста (Context Injection):
-        Берет заголовки из метаданных и пишет их первой строчкой в тексте чанка.
+        Итерация по структуре документа Docling.
+        Сохраняем каждый элемент как Document с metadata.
         """
-        section = metadata.get("Section", "")
-        subsection = metadata.get("SubSection", "")
-        paragraph = metadata.get("Paragraph", "")
+        chunks = []
 
-        # Собираем полный путь к текущему фрагменту для точной векторизации
-        context_parts = []
-        if section:
-            context_parts.append(section)
-        if subsection:
-            context_parts.append(subsection)
-        if paragraph:
-            context_parts.append(paragraph)
+        # Итерируемся по всем текстовым элементам (заголовки, параграфы, списки)
+        # doc.texts() возвращает итератор по TextItem
+        # В новой версии Docling структура может отличаться, используем безопасный подход
 
-        header_context = " > ".join(context_parts)
-        context_prefix = f"Документ: {source}\n"
-        if header_context:
-            context_prefix += f"Контекст: {header_context}\n"
-        context_prefix += "Содержание: "
+        # Попытка получить плоский список элементов, если поддерживается
+        items = []
+        if hasattr(doc, "texts"):
+            items = list(doc.texts())
+        elif hasattr(doc, "body") and hasattr(doc.body, "children"):
+            # Fallback: рекурсивный обход, если doc.texts() недоступен
+            items = self._flatten_items(doc.body.children)
 
-        # Обогащаем контент: "впекаем" путь в начало текста
-        enriched_content = context_prefix + content
-        return enriched_content, header_context
+        current_section = "Начало документа"
 
-    # ---------- кэш ----------
+        for i, item in enumerate(items):
+            text = item.text.strip()
+            if not text:
+                continue
+
+            # Обновляем текущую секцию для контекста
+            if isinstance(item, SectionHeaderItem):
+                current_section = text
+
+            # Метаданные
+            meta = {
+                "source": source,
+                "type": self._get_item_type(item),
+                "chunk_id": i,
+                "section_context": current_section,
+            }
+
+            # Извлечение координат (Provenance)
+            if hasattr(item, "prov") and item.prov:
+                # Берем первое вхождение
+                prov = item.prov[0]
+                if hasattr(prov, "bbox") and prov.bbox:
+                    # Сохраняем bbox как JSON-строку для совместимости с Chroma
+                    # Формат Docling: [L, B, R, T] (обычно)
+                    # Мы просто сохраняем как есть, VisualTool разберется
+                    meta["bbox"] = json.dumps(
+                        prov.bbox.as_tuple()
+                        if hasattr(prov.bbox, "as_tuple")
+                        else prov.bbox
+                    )
+
+                if hasattr(prov, "page_no"):
+                    meta["page_no"] = prov.page_no
+
+            # Создаем документ
+            # Добавляем контекст секции в начало текста для лучшего поиска
+            enriched_content = f"[{current_section}] {text}"
+
+            chunks.append(Document(page_content=enriched_content, metadata=meta))
+
+        return chunks
+
+    def _flatten_items(self, children: List[Any]) -> List[Any]:
+        """Рекурсивно собирает текстовые элементы."""
+        result = []
+        for child in children:
+            if isinstance(child, (TextItem, ListItem, SectionHeaderItem)):
+                result.append(child)
+            if hasattr(child, "children"):
+                result.extend(self._flatten_items(child.children))
+        return result
+
+    def _get_item_type(self, item: Any) -> str:
+        if isinstance(item, SectionHeaderItem):
+            return "header"
+        if isinstance(item, ListItem):
+            return "list_item"
+        return "text"
+
+    # ---------- кэш и утилиты (без изменений логики) ----------
 
     def _cache_path_for(self, file_hash: str) -> Path:
-        # учитываем версию пайплайна в имени кэша
         key = hashlib.sha256(
             f"{file_hash}:{PIPELINE_VERSION}".encode("utf-8")
         ).hexdigest()
@@ -288,15 +242,10 @@ class DocumentProcessor:
         max_age = timedelta(days=getattr(settings, "CACHE_EXPIRE_DAYS", 7))
         return cache_age < max_age
 
-    # ---------- утилиты ----------
-
     def _safe_sizeof(self, f: FileLike) -> Optional[int]:
-        """Пытается получить размер файла. Возвращает None для стримов неизвестной длины."""
         try:
             if isinstance(f, (str, os.PathLike)):
-                p = Path(f)
-                return p.stat().st_size
-            # file-like
+                return Path(f).stat().st_size
             if hasattr(f, "seek") and hasattr(f, "tell"):
                 cur = f.tell()
                 f.seek(0, os.SEEK_END)
@@ -308,29 +257,23 @@ class DocumentProcessor:
         return None
 
     def _get_stream_and_name(self, f: FileLike) -> Tuple[io.BytesIO, str]:
-        """Нормализует вход: путь → BytesIO, file-like → BytesIO."""
         if isinstance(f, (str, os.PathLike)):
             p = Path(f)
             with open(p, "rb") as fh:
                 data = fh.read()
             return io.BytesIO(data), p.name
-        # file-like
         if hasattr(f, "read"):
-            # может быть текстовый — нормализуем к bytes
             raw = f.read()
             if isinstance(raw, str):
                 raw = raw.encode("utf-8")
             return io.BytesIO(raw), getattr(f, "name", "uploaded_file")
         raise TypeError(f"Unsupported file type: {type(f)}")
 
-    def _hash_bytes_stream(
-        self, stream: io.BytesIO, block_size: int = 1024 * 1024
-    ) -> str:
-        """SHA256 потоково, без загрузки всего в память второй раз."""
+    def _hash_bytes_stream(self, stream: io.BytesIO) -> str:
         stream.seek(0)
         h = hashlib.sha256()
         while True:
-            chunk = stream.read(block_size)
+            chunk = stream.read(1024 * 1024)
             if not chunk:
                 break
             h.update(chunk)
@@ -340,8 +283,3 @@ class DocumentProcessor:
     def _suffix_from_name(self, name: str) -> str:
         suf = Path(name).suffix.lower()
         return suf if suf else ".bin"
-
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        # простая нормализация для дедупликации
-        return " ".join(text.strip().lower().split())

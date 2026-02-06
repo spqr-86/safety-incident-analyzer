@@ -33,3 +33,7 @@ applicability_retriever:
   versions:
     v1: "agents/query_expansion_v1.j2"
 
+universal_agent:
+  active_version: "v1"
+  versions:
+    v1: "agents/universal_v1.j2"
