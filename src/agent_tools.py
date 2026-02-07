@@ -4,10 +4,11 @@ import io
 import fitz  # pymupdf
 from PIL import Image, ImageDraw
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 from langchain_core.tools import tool
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import HumanMessage
+from langchain.docstore.document import Document
 
 from config.settings import settings
 from src.llm_factory import get_vision_llm
@@ -21,11 +22,123 @@ def set_global_retriever(retriever: BaseRetriever):
     _retriever = retriever
 
 
+def _fetch_neighboring_chunks(
+    base_id: int, source: str, window: int = 2
+) -> List[Document]:
+    """
+    Fetch chunks with IDs in range [base_id - window, base_id + window] from the same source.
+    Requires retriever to be a Chroma vector store or support metadata filtering.
+    """
+    if not _retriever or not hasattr(_retriever, "vectorstore"):
+        # If it's not a Chroma retriever, we can't do metadata filtering easily
+        return []
+
+    try:
+        # Access underlying Chroma vectorstore
+        vs = _retriever.vectorstore
+
+        # Determine ID range
+        min_id = max(0, base_id - window)
+        max_id = base_id + window
+
+        # Create filter for range and source
+        # Chroma doesn't support range queries directly in `where`,
+        # so we might need to fetch a bit more or use $and if supported.
+        # Simpler approach: Fetch by exact IDs if we know them,
+        # or use metadata filtering if the store supports it.
+        # Chroma `where` supports $and, $eq.
+        # Range queries ($gte, $lte) are supported in newer Chroma versions.
+
+        # Let's try fetching by specific IDs loop (reliable)
+        # Or construct a $or query for IDs.
+
+        # Actually, Chroma `get` method is best if we have IDs.
+        # But we don't have UUIDs, we have integer `chunk_id` in metadata.
+
+        # Let's use `get` with where filter
+        result = vs.get(
+            where={
+                "$and": [
+                    {"source": source},
+                    {"chunk_id": {"$gte": min_id}},
+                    {"chunk_id": {"$lte": max_id}},
+                ]
+            }
+        )
+
+        # Convert to Documents
+        docs = []
+        if result and result["documents"]:
+            for i, text in enumerate(result["documents"]):
+                meta = result["metadatas"][i] if result["metadatas"] else {}
+                docs.append(Document(page_content=text, metadata=meta))
+
+        # Sort by chunk_id to ensure order
+        docs.sort(key=lambda x: x.metadata.get("chunk_id", 0))
+        return docs
+
+    except Exception as e:
+        print(f"Error fetching neighbors: {e}")
+        return []
+
+
+def _merge_chunks(docs: List[Document]) -> Dict:
+    """
+    Merge a list of sorted chunks into a single context block.
+    Computes union BBox.
+    """
+    if not docs:
+        return {}
+
+    # Merge Content
+    full_content = "\n".join([d.page_content for d in docs])
+
+    # Base Metadata from the middle or first chunk
+    base_meta = docs[0].metadata.copy()
+
+    # Compute Union BBox
+    # [min_l, min_t, max_r, max_b]
+    union_bbox = None
+
+    # We also need to handle page changes.
+    # If chunks span multiple pages, visual proof might be tricky.
+    # For now, let's assume we want the BBox of the *primary* page (where the hit was).
+    # Or just return the bbox of the first page encountered.
+    target_page = base_meta.get("page_no")
+
+    for d in docs:
+        bbox_str = d.metadata.get("bbox")
+        page = d.metadata.get("page_no")
+
+        if bbox_str and page == target_page:
+            try:
+                bbox = json.loads(bbox_str)
+                if union_bbox is None:
+                    union_bbox = list(bbox)
+                else:
+                    union_bbox[0] = min(union_bbox[0], bbox[0])
+                    union_bbox[1] = min(union_bbox[1], bbox[1])
+                    union_bbox[2] = max(union_bbox[2], bbox[2])
+                    union_bbox[3] = max(union_bbox[3], bbox[3])
+            except:
+                pass
+
+    return {
+        "content": full_content,
+        "bbox": union_bbox,
+        "page_no": target_page,
+        "source": base_meta.get("source"),
+        "chunk_ids": [d.metadata.get("chunk_id") for d in docs],
+    }
+
+
 @tool
 def search_documents(query: str) -> str:
     """
     Search for information in the safety regulations.
-    Returns relevant text chunks with their ID, Source File, Page Number, and Bounding Box (bbox).
+    Returns RELEVANT text chunks with their ID, Source File, Page Number, and Bounding Box (bbox).
+
+    The tool automatically expands context (fetches neighboring paragraphs) to provide complete information.
 
     Use this tool to find the information, then use the visual_proof tool with the extracted details.
     """
@@ -33,25 +146,128 @@ def search_documents(query: str) -> str:
     if not _retriever:
         return "Error: Retriever not initialized."
 
-    docs = _retriever.invoke(query)
+    # 1. Initial Retrieval
+    initial_docs = _retriever.invoke(query)
 
-    if not docs:
+    if not initial_docs:
         return "No relevant documents found."
 
-    results = []
-    for i, doc in enumerate(docs):
-        meta = doc.metadata
-        source = meta.get("source", "unknown")
-        page = meta.get("page_no", "N/A")
-        bbox = meta.get("bbox", "N/A")
-        content = doc.page_content.replace("\n", " ")[:500]  # Limit content length
+    # 2. Smart Context Extension & Deduplication
+    # We want to group overlapping ranges.
+    # Map: (source, chunk_id) -> Document
 
-        results.append(
-            f"[ID: {i}] File: {source} | Page: {page} | BBox: {bbox}\n"
-            f"Content: {content}..."
+    # Identify unique hits (source, chunk_id)
+    hits = []
+    for doc in initial_docs:
+        meta = doc.metadata
+        if "chunk_id" in meta and "source" in meta:
+            hits.append((meta["source"], meta["chunk_id"]))
+
+    # If we can't find chunk_id, fall back to simple return
+    if not hits:
+        # Fallback logic identical to old version
+        results = []
+        for i, doc in enumerate(initial_docs):
+            meta = doc.metadata
+            source = meta.get("source", "unknown")
+            page = meta.get("page_no", "N/A")
+            bbox = meta.get("bbox", "N/A")
+            content = doc.page_content.replace("\n", " ")[:500]
+            results.append(
+                f"[ID: {i}] File: {source} | Page: {page} | BBox: {bbox}\nContent: {content}..."
+            )
+        return "\n\n".join(results)
+
+    # Group hits by source
+    hits_by_source = {}
+    for source, cid in hits:
+        if source not in hits_by_source:
+            hits_by_source[source] = []
+        hits_by_source[source].append(cid)
+
+    final_blocks = []
+
+    # Process each source
+    for source, cids in hits_by_source.items():
+        # Sort IDs
+        cids.sort()
+
+        # Merge ranges: [10, 11, 12, 15] with window 2 -> [8..14], [13..17] -> overlaps -> [8..17]
+        # Simplified: Just fetch neighbors for each, keep track of fetched IDs
+
+        # Let's fetch ranges
+        ranges = []
+        if not cids:
+            continue
+
+        curr_start = cids[0] - 2
+        curr_end = cids[0] + 2
+
+        for cid in cids[1:]:
+            start = cid - 2
+            end = cid + 2
+
+            if start <= curr_end + 1:  # Overlap or adjacent
+                curr_end = max(curr_end, end)
+            else:
+                ranges.append((curr_start, curr_end))
+                curr_start = start
+                curr_end = end
+        ranges.append((curr_start, curr_end))
+
+        # Fetch and Merge
+        for start, end in ranges:
+            # We need to fetch chunks [start, end]
+            # Since we can't easily do range query without direct DB access in this scope,
+            # We will use the helper _fetch_neighboring_chunks but logic modified to take range.
+
+            # Re-use helper logic but for explicit range
+            try:
+                if hasattr(_retriever, "vectorstore"):
+                    vs = _retriever.vectorstore
+                    result = vs.get(
+                        where={
+                            "$and": [
+                                {"source": source},
+                                {"chunk_id": {"$gte": start}},
+                                {"chunk_id": {"$lte": end}},
+                            ]
+                        }
+                    )
+
+                    if result and result["documents"]:
+                        range_docs = []
+                        for k, txt in enumerate(result["documents"]):
+                            m = result["metadatas"][k]
+                            range_docs.append(Document(page_content=txt, metadata=m))
+
+                        range_docs.sort(key=lambda x: x.metadata.get("chunk_id", 0))
+
+                        # Merge
+                        merged = _merge_chunks(range_docs)
+                        if merged:
+                            final_blocks.append(merged)
+            except Exception as e:
+                print(f"Error processing range {start}-{end} for {source}: {e}")
+                continue
+
+    # 3. Format Output
+    output = []
+    for i, block in enumerate(final_blocks):
+        src = block["source"]
+        pg = block["page_no"]
+        bbox = block["bbox"]
+        txt = block["content"]
+        # Limit length but keep it generous since it's "Smart Context"
+        txt_preview = txt[:2000]
+
+        output.append(
+            f"[Result {i}] File: {src} | Page: {pg} | BBox: {bbox}\n"
+            f"Extended Context:\n{txt_preview}\n"
+            f"(IDs: {block['chunk_ids']})"
         )
 
-    return "\n\n".join(results)
+    return "\n\n".join(output)
 
 
 @tool
@@ -146,9 +362,9 @@ def visual_proof(
             except Exception as e:
                 return f"Error in VLM analysis: {str(e)}"
 
-        # --- Mode: Show (Default) ---
-        # Add padding for crop
-        padding = 20
+        # --- Mode: Show (Default) with Visual Zoom (Padding) ---
+        # Add generous padding for context (50px)
+        padding = 50
         rect.x0 = max(0, rect.x0 - padding)
         rect.y0 = max(0, rect.y0 - padding)
         rect.x1 = min(page.rect.width, rect.x1 + padding)
