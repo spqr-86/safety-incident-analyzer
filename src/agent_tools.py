@@ -9,9 +9,11 @@ from langchain_core.tools import tool
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import HumanMessage
 from langchain.docstore.document import Document
+from langchain_chroma import Chroma
 
 from config.settings import settings
 from src.llm_factory import get_vision_llm
+from src.vector_store import load_vector_store
 
 # Global retriever reference (will be set during init)
 _retriever: Optional[BaseRetriever] = None
@@ -27,35 +29,18 @@ def _fetch_neighboring_chunks(
 ) -> List[Document]:
     """
     Fetch chunks with IDs in range [base_id - window, base_id + window] from the same source.
-    Requires retriever to be a Chroma vector store or support metadata filtering.
+    Uses direct Chroma access for reliability.
     """
-    if not _retriever or not hasattr(_retriever, "vectorstore"):
-        # If it's not a Chroma retriever, we can't do metadata filtering easily
-        return []
-
     try:
-        # Access underlying Chroma vectorstore
-        vs = _retriever.vectorstore
+        # Load vector store directly to bypass retriever wrappers (Reranker, Ensemble)
+        # This ensures we have raw access to metadata filtering
+        vs = load_vector_store()
 
         # Determine ID range
         min_id = max(0, base_id - window)
         max_id = base_id + window
 
-        # Create filter for range and source
-        # Chroma doesn't support range queries directly in `where`,
-        # so we might need to fetch a bit more or use $and if supported.
-        # Simpler approach: Fetch by exact IDs if we know them,
-        # or use metadata filtering if the store supports it.
-        # Chroma `where` supports $and, $eq.
-        # Range queries ($gte, $lte) are supported in newer Chroma versions.
-
-        # Let's try fetching by specific IDs loop (reliable)
-        # Or construct a $or query for IDs.
-
-        # Actually, Chroma `get` method is best if we have IDs.
-        # But we don't have UUIDs, we have integer `chunk_id` in metadata.
-
-        # Let's use `get` with where filter
+        # Chroma `get` method with metadata filter
         result = vs.get(
             where={
                 "$and": [
@@ -223,30 +208,33 @@ def search_documents(query: str) -> str:
 
             # Re-use helper logic but for explicit range
             try:
-                if hasattr(_retriever, "vectorstore"):
-                    vs = _retriever.vectorstore
-                    result = vs.get(
-                        where={
-                            "$and": [
-                                {"source": source},
-                                {"chunk_id": {"$gte": start}},
-                                {"chunk_id": {"$lte": end}},
-                            ]
-                        }
-                    )
+                # Direct access to vector store
+                from src.vector_store import load_vector_store
 
-                    if result and result["documents"]:
-                        range_docs = []
-                        for k, txt in enumerate(result["documents"]):
-                            m = result["metadatas"][k]
-                            range_docs.append(Document(page_content=txt, metadata=m))
+                vs = load_vector_store()
 
-                        range_docs.sort(key=lambda x: x.metadata.get("chunk_id", 0))
+                result = vs.get(
+                    where={
+                        "$and": [
+                            {"source": source},
+                            {"chunk_id": {"$gte": start}},
+                            {"chunk_id": {"$lte": end}},
+                        ]
+                    }
+                )
 
-                        # Merge
-                        merged = _merge_chunks(range_docs)
-                        if merged:
-                            final_blocks.append(merged)
+                if result and result["documents"]:
+                    range_docs = []
+                    for k, txt in enumerate(result["documents"]):
+                        m = result["metadatas"][k]
+                        range_docs.append(Document(page_content=txt, metadata=m))
+
+                    range_docs.sort(key=lambda x: x.metadata.get("chunk_id", 0))
+
+                    # Merge
+                    merged = _merge_chunks(range_docs)
+                    if merged:
+                        final_blocks.append(merged)
             except Exception as e:
                 print(f"Error processing range {start}-{end} for {source}: {e}")
                 continue
