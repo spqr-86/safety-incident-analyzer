@@ -142,11 +142,11 @@ def search_documents(query: str) -> str:
     # Map: (source, chunk_id) -> Document
 
     # Identify unique hits (source, chunk_id)
-    hits = []
+    hits = set()
     for doc in initial_docs:
         meta = doc.metadata
         if "chunk_id" in meta and "source" in meta:
-            hits.append((meta["source"], meta["chunk_id"]))
+            hits.add((meta["source"], meta["chunk_id"]))
 
     # If we can't find chunk_id, fall back to simple return
     if not hits:
