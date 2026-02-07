@@ -12,7 +12,12 @@ from typing import Iterable, List, Optional, Tuple, Union, Any
 
 from docling.document_converter import DocumentConverter
 from docling.datamodel.base_models import InputFormat
-from docling.datamodel.document import DocItem, SectionHeaderItem, TextItem, ListItem
+from docling_core.types.doc.document import (
+    DocItem,
+    SectionHeaderItem,
+    TextItem,
+    ListItem,
+)
 from langchain.docstore.document import Document
 
 from config import constants
@@ -22,7 +27,13 @@ from utils.logging import logger
 FileLike = Union[str, os.PathLike, io.BufferedIOBase, io.BytesIO, io.StringIO]
 
 # ⚙️ Обновляем версию, так как формат хранения кардинально меняется
-PIPELINE_VERSION = "v2.0-visual-coords"
+# v2.1-grouped: добавлен группировка, фильтрация и новые метаданные
+PIPELINE_VERSION = "v2.1-grouped"
+
+# --- Константы для фильтрации и группировки ---
+MIN_BBOX_HEIGHT = 7
+BLACKLIST_PHRASES = ["Премиальная версия", "Скачано с", "Страница"]
+MAX_CHUNK_SIZE = 1000  # Максимальный размер сгруппированного чанка в символах
 
 
 @dataclass
@@ -39,9 +50,11 @@ class DocumentProcessor:
 
     def __init__(
         self,
-        headers: Optional[List[Tuple[str, str]]] = None, # Deprecated, kept for interface compat
-        chunk_size: Optional[int] = None, # Deprecated
-        chunk_overlap: Optional[int] = None, # Deprecated
+        headers: Optional[
+            List[Tuple[str, str]]
+        ] = None,  # Deprecated, kept for interface compat
+        chunk_size: Optional[int] = None,  # Deprecated
+        chunk_overlap: Optional[int] = None,  # Deprecated
     ):
         self.cache_dir = Path(settings.CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -76,7 +89,7 @@ class DocumentProcessor:
         for file_obj in files:
             try:
                 stream, display_name = self._get_stream_and_name(file_obj)
-                
+
                 # Хэш файла для кэша
                 file_hash = self._hash_bytes_stream(stream)
                 cache_path = self._cache_path_for(file_hash)
@@ -94,7 +107,9 @@ class DocumentProcessor:
                 for ch in chunks:
                     # Уникальность определяем по тексту + координатам (если есть)
                     # Но для простоты пока по тексту, хотя разные bbox могут иметь один текст
-                    content_hash = hashlib.sha256(ch.page_content.encode("utf-8")).hexdigest()
+                    content_hash = hashlib.sha256(
+                        ch.page_content.encode("utf-8")
+                    ).hexdigest()
                     if content_hash not in seen_chunk_hashes:
                         all_chunks.append(ch)
                         seen_chunk_hashes.add(content_hash)
@@ -123,7 +138,7 @@ class DocumentProcessor:
             stream.seek(0)
             tmp.write(stream.read())
             tmp.flush()
-            
+
             # Конвертация
             try:
                 res = self._docling.convert(tmp.name)
@@ -137,56 +152,168 @@ class DocumentProcessor:
         """
         Итерация по структуре документа Docling.
         Сохраняем каждый элемент как Document с metadata.
+        Реализована группировка (Grouping) мелких элементов.
         """
         chunks = []
-        
+
         # Безопасное получение списка элементов
         items = []
         if hasattr(doc, "texts"):
             if callable(doc.texts):
                 items = list(doc.texts())
             else:
-                # Если это свойство-список
                 items = list(doc.texts)
         elif hasattr(doc, "body") and hasattr(doc.body, "children"):
-             # Fallback: рекурсивный обход
-             items = self._flatten_items(doc.body.children)
-        
+            items = self._flatten_items(doc.body.children)
+
         current_section = "Начало документа"
-        
+
+        # Буфер для группировки
+        current_chunk_text = []
+        current_chunk_bbox = None  # [l, t, r, b]
+        current_chunk_page = None
+
+        def finalize_chunk(idx_for_id):
+            nonlocal current_chunk_text, current_chunk_bbox, current_chunk_page
+            if not current_chunk_text:
+                return
+
+            # Собираем текст
+            full_text = "\n".join(current_chunk_text)
+
+            meta = {
+                "source": source,
+                "type": "grouped_text",
+                "chunk_id": idx_for_id,
+                "parent_section": current_section,  # В метаданные, не в контент
+            }
+
+            if current_chunk_bbox:
+                meta["bbox"] = json.dumps(current_chunk_bbox)
+            if current_chunk_page:
+                meta["page_no"] = current_chunk_page
+
+            # Контент БЕЗ заголовка (чистый текст)
+            chunks.append(Document(page_content=full_text, metadata=meta))
+
+            # Сброс
+            current_chunk_text = []
+            current_chunk_bbox = None
+            current_chunk_page = None
+
+        def update_bbox(new_bbox, new_page):
+            nonlocal current_chunk_bbox, current_chunk_page
+            if not new_bbox:
+                return
+
+            # Принимаем только bbox с той же страницы. Если страница сменилась — это сложный кейс.
+            # Для простоты: если страница сменилась, мы, возможно, захотим закрыть чанк.
+            # Но пока будем обновлять страницу на последнюю актуальную.
+            if current_chunk_page is not None and current_chunk_page != new_page:
+                # Если страница поменялась, это сигнал закрыть чанк,
+                # иначе bbox будет некорректным (координаты с разных страниц).
+                return False
+
+            current_chunk_page = new_page
+
+            if current_chunk_bbox is None:
+                current_chunk_bbox = list(new_bbox)
+            else:
+                # Merge: [min_l, min_t, max_r, max_b]
+                # Docling bbox обычно: left, bottom, right, top (или top-left origin? Проверим ниже)
+                # Обычно Docling возвращает [l, b, r, t] (bottom-up) или [l, t, r, b] (top-down)
+                # В коде visual_proof мы уже обрабатываем это. Здесь просто берем min/max.
+
+                # Предполодим [x0, y0, x1, y1] где x0<x1. Порядок Y зависит от системы координат.
+                # Просто берем min для 0,1 и max для 2,3 — это безопасно для охвата.
+                current_chunk_bbox[0] = min(current_chunk_bbox[0], new_bbox[0])
+                current_chunk_bbox[1] = min(current_chunk_bbox[1], new_bbox[1])
+                current_chunk_bbox[2] = max(current_chunk_bbox[2], new_bbox[2])
+                current_chunk_bbox[3] = max(current_chunk_bbox[3], new_bbox[3])
+            return True
+
         for i, item in enumerate(items):
             text = item.text.strip()
             if not text:
                 continue
 
-            # Обновляем текущую секцию для контекста
-            if isinstance(item, SectionHeaderItem):
-                current_section = text
+            # 1. Blacklist Filter
+            if any(phrase in text for phrase in BLACKLIST_PHRASES):
+                continue
 
-            # Метаданные
-            meta = {
-                "source": source,
-                "type": self._get_item_type(item),
-                "chunk_id": i,
-                "section_context": current_section
-            }
-
-            # Извлечение координат (Provenance)
+            # 2. BBox Extraction & Height Filter
+            item_bbox = None
+            item_page = None
             if hasattr(item, "prov") and item.prov:
-                # Берем первое вхождение
                 prov = item.prov[0]
                 if hasattr(prov, "bbox") and prov.bbox:
-                    # Сохраняем bbox как JSON-строку для совместимости с Chroma
-                    meta["bbox"] = json.dumps(prov.bbox.as_tuple() if hasattr(prov.bbox, "as_tuple") else prov.bbox)
-                
-                if hasattr(prov, "page_no"):
-                    meta["page_no"] = prov.page_no
+                    bbox_tuple = (
+                        prov.bbox.as_tuple()
+                        if hasattr(prov.bbox, "as_tuple")
+                        else prov.bbox
+                    )
+                    # Проверка высоты
+                    # Обычно height = abs(y1 - y0)
+                    height = abs(bbox_tuple[3] - bbox_tuple[1])
+                    if height < MIN_BBOX_HEIGHT:
+                        continue
+                    item_bbox = bbox_tuple
 
-            # Создаем документ
-            # Добавляем контекст секции в начало текста для лучшего поиска
-            enriched_content = f"[{current_section}] {text}"
-            
-            chunks.append(Document(page_content=enriched_content, metadata=meta))
+                if hasattr(prov, "page_no"):
+                    item_page = prov.page_no
+
+            # 3. Handling Headers (Explicit Break)
+            if isinstance(item, SectionHeaderItem):
+                # Закрываем предыдущий чанк
+                finalize_chunk(i)
+                current_section = text
+
+                # Заголовок сам по себе тоже может быть чанком, или началом нового.
+                # Обычно заголовок полезно иметь как отдельный короткий чанк или начало.
+                # Давайте добавим его как отдельный чанк для навигации,
+                # ИЛИ просто обновим контекст.
+                # Лучше: Заголовок — это контекст. Мы его не добавляем как текст,
+                # если только он не содержит полезной инфы.
+                # Но часто заголовок — это и есть инфа.
+                # Добавим заголовок как отдельный чанк.
+                chunks.append(
+                    Document(
+                        page_content=text,
+                        metadata={
+                            "source": source,
+                            "type": "header",
+                            "chunk_id": i,
+                            "parent_section": current_section,
+                            "bbox": json.dumps(item_bbox) if item_bbox else None,
+                            "page_no": item_page,
+                        },
+                    )
+                )
+                continue
+
+            # 4. Grouping Logic
+            # Если страница сменилась — закрываем чанк
+            if (
+                current_chunk_page is not None
+                and item_page is not None
+                and current_chunk_page != item_page
+            ):
+                finalize_chunk(i)
+
+            # Если размер превышен — закрываем чанк
+            current_len = sum(len(t) for t in current_chunk_text)
+            if current_len + len(text) > MAX_CHUNK_SIZE:
+                finalize_chunk(i)
+
+            # Добавляем в буфер
+            current_chunk_text.append(text)
+            if item_bbox:
+                update_bbox(item_bbox, item_page)
+            elif item_page:
+                current_chunk_page = item_page
+
+        # Finalize last chunk
+        finalize_chunk(len(items))
 
         return chunks
 

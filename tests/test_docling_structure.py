@@ -49,8 +49,9 @@ def test_extract_chunks_real_types():
     # Check Header
     assert chunks[0].metadata["type"] == "header"
     assert "Chapter 1" in chunks[0].page_content
-    # Check context injection
-    assert "[Chapter 1]" in chunks[0].page_content
+    # Check context injection (now in metadata)
+    assert chunks[0].metadata["parent_section"] == "Chapter 1"
+    # assert "[Chapter 1]" in chunks[0].page_content # Old behavior removed
 
     # Check BBox
     bbox_json = chunks[0].metadata["bbox"]
@@ -58,6 +59,8 @@ def test_extract_chunks_real_types():
     assert json.loads(bbox_json) == [10.0, 50.0, 200.0, 30.0]
 
     # Check Text
-    assert chunks[1].metadata["type"] == "text"
+    assert chunks[1].metadata["type"] == "grouped_text"  # Now it's grouped_text
     assert "Content" in chunks[1].page_content
-    assert "[Chapter 1]" in chunks[1].page_content
+    # Context should NOT be in content anymore, but in metadata
+    assert "[Chapter 1]" not in chunks[1].page_content
+    assert chunks[1].metadata["parent_section"] == "Chapter 1"
