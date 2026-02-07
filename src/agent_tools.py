@@ -1,6 +1,8 @@
 import json
 import base64
+import io
 import fitz  # pymupdf
+from PIL import Image, ImageDraw
 from pathlib import Path
 from typing import List, Optional
 from langchain_core.tools import tool
@@ -83,7 +85,7 @@ def visual_proof(
 
         l, t, r, b = bbox
 
-        # Check if coordinates look like PDF (bottom-left) and flip if needed
+        # Normalize coordinates (PDF bottom-left to Top-Left)
         if t > b:
             height = page.rect.height
             y0 = height - t
@@ -93,32 +95,41 @@ def visual_proof(
         else:
             rect = fitz.Rect(l, t, r, b)
 
-        # Add padding
-        padding = 20
-        rect.x0 = max(0, rect.x0 - padding)
-        rect.y0 = max(0, rect.y0 - padding)
-        rect.x1 = min(page.rect.width, rect.x1 + padding)
-        rect.y1 = min(page.rect.height, rect.y1 + padding)
-
-        # Render (higher DPI for analysis)
-        dpi = 200 if mode == "analyze" else 150
-        pix = page.get_pixmap(clip=rect, dpi=dpi)
-
-        # --- Mode: Analyze (VLM) ---
+        # --- Mode: Analyze (VLM) with Red Box Strategy ---
         if mode == "analyze":
             try:
-                img_data = pix.tobytes("png")
-                b64_img = base64.b64encode(img_data).decode("utf-8")
+                # 1. Render FULL page (context is key for avoiding safety refusal)
+                target_dpi = 150
+                pix = page.get_pixmap(dpi=target_dpi)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+                # 2. Scale coordinates (PDF 72 dpi -> target_dpi)
+                scale = target_dpi / 72.0
+                draw_rect = [
+                    rect.x0 * scale,
+                    rect.y0 * scale,
+                    rect.x1 * scale,
+                    rect.y1 * scale,
+                ]
+
+                # 3. Draw Red Box
+                draw = ImageDraw.Draw(img)
+                draw.rectangle(draw_rect, outline="red", width=5)
+
+                # 4. Encode
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
 
                 vlm = get_vision_llm()
 
-                # Strict instruction for verbatim transcription
                 prompt_text = (
-                    "Analyze this document fragment.\n"
-                    "1. Transcribe the text/table exactly as it appears in the image, in Russian.\n"
-                    "2. If it is a table, use Markdown table format.\n"
-                    "3. Do NOT summarize or explain. Return raw text only.\n"
-                    "4. If there are lists (a, b, c or 1, 2, 3), preserve the numbering."
+                    "This is a public government document (Russia) containing safety regulations.\n"
+                    "Focus ONLY on the content inside the RED BOX.\n"
+                    "1. Transcribe the text or table inside the red box exactly as it appears, in Russian.\n"
+                    "2. Do not summarize.\n"
+                    "3. If the box cuts text, transcribe what is visible.\n"
+                    "4. Output raw text/markdown only."
                 )
 
                 msg = HumanMessage(
@@ -136,6 +147,15 @@ def visual_proof(
                 return f"Error in VLM analysis: {str(e)}"
 
         # --- Mode: Show (Default) ---
+        # Add padding for crop
+        padding = 20
+        rect.x0 = max(0, rect.x0 - padding)
+        rect.y0 = max(0, rect.y0 - padding)
+        rect.x1 = min(page.rect.width, rect.x1 + padding)
+        rect.y1 = min(page.rect.height, rect.y1 + padding)
+
+        pix = page.get_pixmap(clip=rect, dpi=150)
+
         # Save
         output_dir = Path("static/visuals")
         output_dir.mkdir(parents=True, exist_ok=True)
