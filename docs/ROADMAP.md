@@ -1,8 +1,8 @@
 # 📊 План развития проекта Safety Incident Analyzer
 
 **Дата создания:** 2025-12-14
-**Последнее обновление:** 2026-02-03
-**Фокус:** MAS, Chain-of-Thought, продвинутые промпты
+**Последнее обновление:** 2026-02-09
+**Фокус:** Multi-Agent RAG с единым ReAct-агентом, regex-фильтр, thinking levels, Term Glossary
 
 ---
 
@@ -27,16 +27,25 @@
    - Citation Quality (поддержка формата `[Источник: ...]`)
 
 4. **Многоагентная система (MAS) на базе LangGraph:**
-   - Пайплайн: RelevanceChecker → ResearchAgent (с CoT) → VerificationAgent (QA)
-   - Поддержка циклов доработки (Research Loop)
+   - 3-Agent Workflow: RelevanceChecker → ResearchAgent (с CoT) → VerificationAgent (QA)
+   - Поддержка циклов доработки (Research Loop, max 3)
    - Визуализация хода мыслей (Chain-of-Thought) в UI
 
-5. **Prompt Management System v2:**
-   - Версионирование промптов (`registry.yaml`)
-   - Использование XML-тегов (`<thought>`, `<answer>`, `<json>`, `<label>`)
-   - Техники: Few-Shot, Negative Constraints, Role Prompting
+5. **Multi-Agent RAG с единым ReAct-агентом (Gemini 3):**
+   - Regex-фильтр → RAG Agent (Flash, thinking: 8192) → Verifier (Flash, thinking: 1024)
+   - Единый агент с `search_documents` + `visual_proof` инструментами и условной декомпозицией
+   - Regex-классификация chitchat/out_of_scope без LLM (детерминированно, zero-cost)
+   - Ревизия с передачей draft_answer + feedback верификатора
+   - BASE_RULES макрос для нормативной точности (10 краевых случаев)
+   - Term Glossary (`config/term_glossary.yaml`) — детерминированная расшифровка доменных сокращений с stem-based matching для русской морфологии
 
-6. **CI/CD и скрипты:**
+6. **Prompt Management System v2:**
+   - Версионирование промптов (`registry.yaml`)
+   - Jinja2 макрос `base_rules.j2` с интеграцией глоссария
+   - Query Expansion v2 (без хардкода маппингов)
+   - RAG Agent v1 (единый ReAct с условной декомпозицией), Verifier v2 (6 критериев)
+
+7. **CI/CD и скрипты:**
    - GitHub Actions workflow для автоматического eval
    - Скрипт `run_full_evaluation.py` с поддержкой `--mode mas/rag`
 

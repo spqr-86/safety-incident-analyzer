@@ -1,5 +1,6 @@
 import os
 import sys
+import re
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -15,13 +16,16 @@ from config.settings import settings
 from src.final_chain import create_final_hybrid_chain
 from utils.logging import logger
 
-# MAS (multi-agent) пайплайн
+# Multi-Agent RAG Workflow
 try:
-    from agents.workflow import AgentWorkflow
+    from langchain_community.retrievers import BM25Retriever
+    from langchain_core.documents import Document
+    from langchain_classic.retrievers import EnsembleRetriever
+    from agents.multiagent_rag import MultiAgentRAGWorkflow
 
     MAS_AVAILABLE = True
 except Exception as e:
-    logger.warning(f"MAS workflow is not available: {e}")
+    logger.warning(f"Multi-Agent RAG is not available: {e}")
     MAS_AVAILABLE = False
 
 # Индексация «по кнопке»
@@ -73,11 +77,9 @@ with st.sidebar:
 
     # MAS toggle
     if MAS_AVAILABLE:
-        mas_mode = st.toggle(
-            "🔀 MAS-режим (Relevance → Research → Verification)", value=True
-        )
+        mas_mode = st.toggle("🧠 Multi-Agent RAG (Router → RAG → Verifier)", value=True)
     else:
-        st.info("Многоагентный режим недоступен (модуль agents.workflow не найден).")
+        st.info("Multi-Agent RAG недоступен.")
         mas_mode = False
 
     st.divider()
@@ -103,7 +105,6 @@ with st.sidebar:
 
     st.subheader("🔧 Параметры отображения")
     show_sources_n = st.slider("Сколько источников показать", 3, 20, 8, 1)
-    agent_docs_k = st.slider("Сколько документов отдавать агентам", 4, 16, 8, 1)
 
     st.divider()
     if st.button("🧹 Очистить чат", use_container_width=True):
@@ -120,7 +121,7 @@ def load_resources():
     """
     Грузим один раз:
       - гибридную RAG-цепочку (retriever + LLM)
-      - MAS workflow (если доступен)
+      - Multi-Agent RAG Workflow
     """
     # Проверяем наличие БД
     if not os.path.exists(settings.CHROMA_DB_PATH) or not os.listdir(
@@ -135,8 +136,15 @@ def load_resources():
         st.error(f"Произошла ошибка при подготовке RAG-цепочки: {e}")
         return None, None, None
 
-    wf = AgentWorkflow() if MAS_AVAILABLE else None
-    return (chain, retriever, wf)
+    # Multi-Agent RAG Workflow (использует OpenAI по умолчанию)
+    agent = None
+    if MAS_AVAILABLE:
+        try:
+            agent = MultiAgentRAGWorkflow(retriever, llm_provider="openai")
+        except Exception as e:
+            logger.warning(f"Failed to init MultiAgentRAGWorkflow: {e}")
+
+    return (chain, retriever, agent)
 
 
 loaded = load_resources()
@@ -144,7 +152,7 @@ if not loaded or loaded[0] is None:
     st.warning("Приложение не может быть запущено…")
     st.stop()
 
-rag_chain, hybrid_retriever, workflow = loaded
+rag_chain, hybrid_retriever, agent = loaded
 
 # =========================
 #     CHAT HISTORY INIT
@@ -153,8 +161,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": "Здравствуйте! Задайте вопрос по СНиП/ГОСТ/ОТ/ПБ. "
-            "Я отвечаю строго по материалам из библиотеки и всегда показываю источники.",
+            "content": "Здравствуйте! Я использую Multi-Agent RAG с маршрутизацией и верификацией. "
+            "Задайте вопрос по охране труда, и я найду ответ в нормативных документах.",
         }
     ]
 
@@ -162,6 +170,15 @@ if "messages" not in st.session_state:
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
+        # Рендеринг картинок в истории сложнее, так как st.image создает отдельный блок
+        # Проверим, есть ли картинки в контенте сообщения (если это сохраненный ответ)
+        if m["role"] == "assistant":
+            img_matches = re.findall(
+                r"(static/visuals/proof_[a-f0-9]+\.png)", m["content"]
+            )
+            for img_path in img_matches:
+                if os.path.exists(img_path):
+                    st.image(img_path, caption="Визуальное доказательство", width=600)
 
 # =========================
 #       CHAT INPUT
@@ -177,51 +194,40 @@ if user_query:
 
     # Ветка ответа
     with st.chat_message("assistant"):
-        if mas_mode and workflow:
-            # --- MAS MODE ---
-            with st.spinner("Проверяю релевантность → исследую → верифицирую…"):
+        if mas_mode and agent:
+            # --- MULTI-AGENT RAG MODE ---
+            with st.spinner("Multi-Agent RAG (Router → Search → Generate → Verify)..."):
                 try:
-                    # Отдаём агентам ограниченное число документов
-                    docs_for_agents = hybrid_retriever.invoke(user_query)[:agent_docs_k]
-                    # Для совместимости с твоим workflow: он сам вызывает retriever внутри,
-                    # но мы подстрахуем и сократим контекст
-                    result = workflow.full_pipeline(
-                        question=user_query, retriever=hybrid_retriever
-                    )
+                    result = agent.invoke(user_query)
 
-                    answer = result.get("draft_answer", "").strip()
-                    verification = result.get("verification_report", "").strip()
+                    answer = result.get("final_answer", "").strip()
 
                     if not answer:
                         answer = "Не удалось сформировать ответ."
 
-                    # Показываем ход мыслей агента в экспандере (для прозрачности)
-                    research_thought = result.get("research_thought", "").strip()
-                    if research_thought:
-                        with st.expander(
-                            "💭 Ход рассуждений агента (Chain-of-Thought)",
-                            expanded=False,
-                        ):
-                            st.markdown(research_thought)
-
                     st.markdown(answer)
+
+                    # Проверка на наличие изображений в тексте ответа и их отрисовка
+                    img_matches = re.findall(
+                        r"(static/visuals/proof_[a-f0-9]+\.png)", answer
+                    )
+                    for img_path in img_matches:
+                        if os.path.exists(img_path):
+                            st.image(
+                                img_path, caption="Визуальное доказательство", width=600
+                            )
+
                     # Сохраним последний ответ для истории
                     st.session_state.last_answer = answer
 
-                    # Панель верификации
-                    with st.expander("✅ Верификация ответа", expanded=True):
-                        if verification:
-                            st.markdown(verification)
-                        else:
-                            st.caption("Нет отчёта верификации.")
-
                 except Exception as e:
-                    st.error(f"Ошибка MAS-пайплайна: {e}")
+                    st.error(f"Ошибка агента: {e}")
                     answer = f"Извините, произошла ошибка: {e}"
+                    logger.error(f"Agent error: {e}", exc_info=True)
         else:
-            # --- RAG MODE (стриминг) ---
+            # --- RAG MODE (Legacy) ---
             try:
-                with st.spinner("Готовлю ответ…"):
+                with st.spinner("Готовлю ответ (Classic RAG)..."):
                     response_text = st.write_stream(
                         rag_chain.stream(
                             {
@@ -237,6 +243,7 @@ if user_query:
                 answer = f"Извините, произошла ошибка: {e}"
 
         # Источники (общие для обоих режимов)
+        # Агент сам ищет, но мы можем показать топ документов из RAG для справки
         try:
             retrieved_docs = hybrid_retriever.invoke(user_query)[:show_sources_n]
         except Exception:

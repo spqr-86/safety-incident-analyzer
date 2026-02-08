@@ -2,7 +2,7 @@ import datetime
 import os
 
 from dotenv import load_dotenv
-from langchain.smith import RunEvalConfig
+from langchain_classic.smith import RunEvalConfig
 from langsmith import Client
 
 from src.custom_evaluators import check_correctness

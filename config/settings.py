@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     # Параметры для LLM и векторного хранилища
-    LLM_PROVIDER: str = "gigachat"  # варианты: huggingface, openai, groq
+    LLM_PROVIDER: str = "openai"
     MODEL_NAME: str = "gpt-4o-mini"  # для OpenAI
     TEMPERATURE: float = 0.0
 
@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 400
 
     SOURCE_DOCS_PATH: str = "./source_docs"
+
+    # Google Gemini settings
+    GEMINI_API_KEY: str = ""
+    GEMINI_FAST_MODEL: str = "gemini-3-flash-preview"
 
     # динамически подставим суффикс по провайдеру,
     # если путь не задан через .env

@@ -4,273 +4,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AI Safety Compliance Assistant** is a RAG system for analyzing workplace safety regulations (Russian ГОСТ, СНиП, СП standards). It uses hybrid retrieval (semantic + BM25), FlashRank reranking, and a multi-agent LangGraph workflow for quality control.
+**AI Safety Compliance Assistant** — RAG system for analyzing Russian workplace safety regulations (ГОСТ, СНиП, СП). Uses hybrid retrieval (semantic + BM25), FlashRank reranking, and multi-agent LangGraph workflows for quality control.
 
-**Key Technologies**: Python 3.11+, LangChain, LangGraph, ChromaDB, Docling, FlashRank, Streamlit
+**Stack**: Python 3.11+, LangChain, LangGraph, ChromaDB, Docling, FlashRank, Streamlit, Google Gemini 3
 
 ## Development Commands
 
-### Core Operations
 ```bash
-# Setup virtual environment (first time only)
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+# Setup
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env  # then fill in API keys
 
-# Index documents (converts PDF/DOCX to MD, creates vector embeddings)
-python index.py
-
-# Launch Streamlit web interface
+# Run app
 streamlit run app.py
 
-# Run full evaluation suite (requires LANGSMITH_API_KEY)
-python eval/run_full_evaluation.py
-```
+# Index documents (DESTRUCTIVE: deletes existing ChromaDB first)
+python index.py
 
-### Testing
-```bash
-# Activate venv first (if not already activated)
-source venv/bin/activate
+# Tests
+pytest -v                              # all tests
+pytest -m unit                         # unit only
+pytest -m integration                  # integration only
+pytest -m "not slow"                   # skip slow
+pytest tests/test_agent_tools.py -v -s # single file, with stdout
 
-# Run all tests with verbose output
-pytest -v
-
-# Run specific test categories
-pytest -m unit              # Unit tests only
-pytest -m integration       # Integration tests only
-pytest -m "not slow"        # Skip slow tests
-
-# Run single test file
-pytest tests/test_retrieval_metrics.py -v
-```
-
-### Linting and Formatting
-```bash
-# Format code with Black
+# Lint/format
 black .
+ruff check . --fix
 
-# Lint with Ruff
-ruff check .
-
-# Auto-fix linting issues
-ruff check --fix .
-```
-
-### Evaluation and Metrics
-```bash
-# Run A/B testing between configurations
-python run_ab_test.py
-
-# Check if metrics meet target thresholds
-python scripts/check_target_metrics.py
-
-# Compare current run against baseline
-python scripts/compare_with_baseline.py
-
-# Analyze metric trends over time
-python scripts/analyze_trends.py
-```
-
-### Dataset Management
-```bash
-# Generate new test questions from documents
-python scripts/generate_questions.py
-
-# Add questions to evaluation dataset
-python scripts/add_questions_to_dataset.py
-
-# Parse Perplexity-generated datasets
-python scripts/parse_perplexity_dataset.py
-```
-
-### Prompt Management
-```bash
-# Validate all prompts in registry
+# Prompt validation (run after any prompt changes)
 python scripts/validate_prompts.py
 
-# Test rendering of specific prompt versions
-# (Set env vars like PROMPT_RESEARCH_AGENT_VERSION=v2)
-DEBUG_PROMPTS=true python -c "from src.prompt_manager import PromptManager; pm = PromptManager(); print(pm.render('research_agent', question='test', context='test'))"
+# Evaluation (requires LANGSMITH_API_KEY)
+python eval/run_full_evaluation.py
+python scripts/check_target_metrics.py
+python scripts/compare_with_baseline.py
 ```
 
 ## Architecture
 
-### Multi-Agent Workflow (LangGraph)
+### Two RAG Approaches (coexist, selectable in UI)
 
-The system orchestrates three specialized agents in a graph-based workflow:
+1. **Multi-Agent RAG** (`agents/multiagent_rag.py`): Primary approach using Gemini/OpenAI with a ReAct agent and thinking levels.
+   ```
+   glossary expansion → regex filter → rag_agent (ReAct) → verifier → format_final
+                                      → direct_response (chitchat/out_of_scope)
 
-1. **RelevanceChecker** (`agents/relevance_checker.py`): Classifies user questions
-   - `CAN_ANSWER`: Question is about workplace safety
-   - `PARTIAL`: Partially relevant, needs clarification
-   - `CANNOT_ANSWER`: Off-topic, spam, or chit-chat
+   Revision: verifier (needs_revision) → rag_agent (max 1)
+   ```
+   - **Regex Filter** (`_classify_query`): No LLM — regex patterns classify chitchat / out_of_scope / rag. Fast, deterministic, zero-cost.
+   - **RAG Agent** (flash, thinking: 8192): Single ReAct agent with `search_documents` + `visual_proof` tools. Handles both simple and complex queries via conditional decomposition (few-shot examples in prompt).
+   - **Verifier** (flash, thinking: 1024): JSON fact-check (approved / needs_revision), 6 criteria
+   - **Revision with context**: On needs_revision, agent receives previous `draft_answer` + verifier feedback for targeted fixes
+   - **Shared rules**: `prompts/common/base_rules.j2` macro imported by RAG agent prompt
+   - **Term Glossary**: `config/term_glossary.yaml` — deterministic expansion of domain abbreviations (e.g., "программа А" → official term) before query enters the graph. Handles Russian morphology via stem-based matching.
 
-2. **ResearchAgent** (`agents/research_agent.py`): Generates draft answers using retrieved context
+2. **Simple RAG Chain** (`src/final_chain.py`): Legacy fallback. Hybrid retrieval → FlashRank rerank (top_n=12) → LLM generation. Uses `ApplicabilityRetriever` for LLM-powered query expansion.
 
-3. **VerificationAgent** (`agents/verification_agent.py`): Validates answers against source documents
-   - Checks for hallucinations
-   - Verifies factual accuracy
-   - Sends feedback for revision if needed (max 2 loops)
+### Tools (`src/agent_tools.py`)
 
-**Workflow Implementation**: `agents/workflow.py` defines the LangGraph state machine with conditional edges and retry logic.
+- **`search_documents`**: Hybrid retrieval + Smart Context Extension (sliding window ±2 chunks with range merging and deduplication by source+chunk_id)
+- **`visual_proof`**: Two modes — `mode="show"` returns cropped PDF image, `mode="analyze"` sends full page with red box to VLM for OCR/table extraction
 
-### RAG Pipeline
+### Key Subsystems
 
-**Entry Point**: `src/final_chain.py` implements the hybrid retrieval chain:
+**Prompt Management**: All prompts are versioned Jinja2 templates. Registry at `prompts/registry.yaml` maps IDs to files. Override versions via env: `PROMPT_RESEARCH_AGENT_VERSION=v2`. Debug with `DEBUG_PROMPTS=true`.
 
-1. **Semantic Search**: ChromaDB vector search (top-K documents)
-2. **Keyword Search**: BM25Retriever for lexical matching
-3. **Ensemble**: Combines results with configurable weights (default: [0.6, 0.4])
-4. **Reranking**: FlashRank reranks top candidates (final top-5)
-5. **Generation**: LLM generates answer from reranked context
+**LLM Factory** (`src/llm_factory.py`): Unified interface — `get_llm()` (OpenAI), `get_gemini_llm(thinking_budget, response_mime_type)`, `get_vision_llm()`. Provider set via `LLM_PROVIDER` env var.
 
-**Alternative Chain**: `src/ultimate_chain.py` provides a simpler non-agentic chain for comparison.
+**Document Processing** (`src/file_handler.py`): Docling PDF/DOCX→MD conversion with MD5 caching (7-day expiry), BBox extraction for visual proof, token-aware batching.
 
-### Prompt Management System
-
-**All prompts are version-controlled templates** using Jinja2:
-
-- **Registry**: `prompts/registry.yaml` maps prompt IDs to versioned template files
-- **Templates**: `prompts/agents/*.j2` and `prompts/chains/*.j2`
-- **Manager**: `src/prompt_manager.py` handles rendering with variable substitution
-- **Version Control**: Override active version via environment variables:
-  ```bash
-  PROMPT_RESEARCH_AGENT_VERSION=v2 streamlit run app.py
-  ```
-
-**When editing prompts**: Always update both the template file and `registry.yaml` if adding new versions. Use `scripts/validate_prompts.py` to verify integrity.
-
-### LLM Abstraction
-
-`src/llm_factory.py` provides unified interface for multiple LLM providers:
-- **GigaChat** (default for Russian regulatory text)
-- **OpenAI** (GPT-4o-mini, GPT-4o)
-
-Switch providers via `.env`:
-```bash
-LLM_PROVIDER=gigachat  # or openai
-MODEL_NAME=GigaChat    # or gpt-4o-mini
-```
-
-### Vector Store
-
-`src/vector_store.py` manages ChromaDB:
-- **Embeddings**: Supports OpenAI, HuggingFace API, or local models
-- **Persistence**: Data stored in `CHROMA_DB_PATH` (default: `./chroma_db_gigachat`)
-- **Collection**: Named via `CHROMA_COLLECTION_NAME` (default: `documents`)
-
-### Document Processing
-
-`src/file_handler.py` handles ingestion:
-- **Supported Formats**: PDF, DOCX, Markdown
-- **Converter**: Docling library for PDF/DOCX → Markdown conversion
-- **Chunking**: RecursiveCharacterTextSplitter (default: 1200 chars, 150 overlap)
-
-**Source Documents**: Place files in `source_docs/` directory before running `python index.py`.
+**Vector Store** (`src/vector_store.py`): ChromaDB with token-aware batching (280K token limit per batch for OpenAI). Supports OpenAI, HuggingFace API, or local embeddings.
 
 ## Configuration
 
-**Environment Variables**: Copy `.env.example` → `.env` and configure:
+Copy `.env.example` → `.env`. Key settings:
 
-**Required**:
-- `GIGACHAT_CREDENTIALS` (or `OPENAI_API_KEY`)
-- `OPENAI_API_KEY` (for embeddings, even if using GigaChat for LLM)
+| Setting | Default | Notes |
+|---------|---------|-------|
+| `LLM_PROVIDER` | `openai` | `openai` |
+| `EMBEDDING_PROVIDER` | `openai` | `openai`, `hf_api`, or `local` |
+| `CHUNK_SIZE` | 1500 | |
+| `CHUNK_OVERLAP` | 400 | |
+| `VECTOR_SEARCH_K` | 10 | |
+| `HYBRID_RETRIEVER_WEIGHTS` | [0.6, 0.4] | [semantic, keyword] |
+| `GEMINI_FAST_MODEL` | `gemini-3-flash-preview` | RAG Agent + Verifier |
 
-**Optional**:
-- `LANGSMITH_API_KEY`: For evaluation and tracing
-- `LANGSMITH_PROJECT`: Project name for LangSmith
-- `WANDB_API_KEY`: For experiment tracking
-
-**Tunable Parameters**:
-- `CHUNK_SIZE`: Default 1200
-- `CHUNK_OVERLAP`: Default 150
-- `VECTOR_SEARCH_K`: Default 10
-- `HYBRID_RETRIEVER_WEIGHTS`: Default [0.6, 0.4] (semantic, keyword)
-
-**Settings Module**: `config/settings.py` loads and validates all configuration using pydantic-settings.
-
-## Evaluation Framework
-
-**Metrics** (target values in parentheses):
-- **Correctness** (>7.0/10): Semantic similarity to ground truth
-- **Faithfulness** (>0.85): No hallucinations vs. source context
-- **Answer Relevance** (>0.80): Alignment with user question
-- **P95 Latency** (<15s): Response time
-
-**Evaluation Datasets**: `tests/dataset.csv` contains question/answer pairs
-
-**Metric Implementations**:
-- `src/retrieval_metrics.py`: Retrieval-specific metrics
-- `src/advanced_generation_metrics.py`: Generation quality metrics
-- `src/custom_evaluators.py`: Custom domain-specific evaluators
-
-**CI/CD**: GitHub Actions workflow (`.github/workflows/evaluation.yml`) runs evaluation on commits.
-
-## Key Files Reference
-
-| File | Purpose |
-|------|---------|
-| `app.py` | Streamlit web interface entry point |
-| `index.py` | Document indexing script |
-| `agents/workflow.py` | LangGraph multi-agent orchestration |
-| `src/final_chain.py` | Hybrid RAG chain (production) |
-| `src/ultimate_chain.py` | Simple RAG chain (baseline) |
-| `src/prompt_manager.py` | Version-controlled prompt rendering |
-| `src/llm_factory.py` | LLM provider abstraction |
-| `src/vector_store.py` | ChromaDB vector store interface |
-| `prompts/registry.yaml` | Prompt version registry |
-| `config/settings.py` | Configuration management |
-| `eval/run_full_evaluation.py` | Full evaluation suite |
-| `tests/dataset.csv` | Evaluation question/answer dataset |
+All config loaded via pydantic-settings in `config/settings.py`. ChromaDB path auto-appends provider suffix (e.g., `chroma_db_openai`).
 
 ## Common Patterns
 
 ### Adding a New Agent
 
-1. Create agent file in `agents/` (e.g., `agents/summary_agent.py`)
-2. Create prompt template in `prompts/agents/` (e.g., `summary_v1.j2`)
-3. Register prompt in `prompts/registry.yaml`:
-   ```yaml
-   summary_agent:
-     active_version: "v1"
-     versions:
-       v1: "agents/summary_v1.j2"
-   ```
-4. Add node to workflow in `agents/workflow.py`:
-   ```python
-   wf.add_node("summarize", self._summarize_step)
-   wf.add_edge("research", "summarize")
-   ```
+1. Create prompt template in `prompts/agents/<name>_v1.j2`
+2. Register in `prompts/registry.yaml` with active_version
+3. Add agent logic in `agents/` or as a node in existing workflow
+4. Validate: `python scripts/validate_prompts.py`
 
-### Modifying Retrieval Strategy
+### Adding a New Prompt Version
 
-Edit `src/final_chain.py`:
-- Adjust `settings.VECTOR_SEARCH_K` for more/fewer candidates
-- Modify `settings.HYBRID_RETRIEVER_WEIGHTS` to balance semantic vs keyword
-- Change `top_n=5` in FlashrankRerank for different reranking cutoff
-
-### Running Experiments
-
-1. Modify configuration in `.env` or code
-2. Run A/B test: `python run_ab_test.py`
-3. Check metrics: `python scripts/check_target_metrics.py`
-4. Compare to baseline: `python scripts/compare_with_baseline.py`
-5. Log results to LangSmith for tracking
-
-### Debugging Failed Tests
-
-1. Check error logs in `analysis/error_reports/`
-2. Run test with verbose output: `pytest tests/test_file.py -v -s`
-3. Enable prompt debugging: `DEBUG_PROMPTS=true pytest tests/test_file.py`
-4. Review LangSmith traces (if `LANGSMITH_TRACING_V2=true`)
+1. Create new template file (e.g., `research_v3.j2`)
+2. Add version entry in `prompts/registry.yaml`
+3. Update `active_version` or test via env override: `PROMPT_RESEARCH_AGENT_VERSION=v3`
 
 ## Important Notes
 
-- **Prompt Changes**: Always validate with `scripts/validate_prompts.py` before committing
-- **Russian Language**: System is optimized for Russian regulatory documents
-- **GigaChat Default**: GigaChat performs better on Russian legal text than GPT-4
-- **Reindexing**: Run `python index.py` after adding documents to `source_docs/`
-- **FlashRank Performance**: CPU-intensive; expect 2-3s latency on reranking
-- **Max Reruns**: Verification agent allows 3 revision loops before returning final answer (partial answer if still fails)
-- **Test Data**: Keep `tests/dataset.csv` updated when adding new domain knowledge
+- **Russian Language**: System optimized for Russian regulatory text.
+- **`index.py` is destructive**: Deletes entire ChromaDB before reindexing. No incremental mode.
+- **BASE_RULES**: `prompts/common/base_rules.j2` macro enforces strict factual adherence — imported by RAG agent prompt. 10 edge cases including glossary integration and unknown abbreviation fallback.
+- **Term Glossary**: `config/term_glossary.yaml` maps unofficial domain abbreviations to official terms. Loaded once at workflow init, applied deterministically before regex filter. To add terms: edit the YAML file, no code changes needed.
+- **Visual Proof images**: Saved to `static/visuals/` as `proof_<md5[:8]>.png`. Requires `pymupdf` and `PIL`.
+- **Gemini Rate Limits**: Free tier has strict quotas. Pass `llm_provider="openai"` to `MultiAgentRAGWorkflow` as fallback.
+- **FlashRank**: CPU-intensive, expect 2-3s reranking latency.
+- **Streamlit Cloud**: `app.py` conditionally patches sqlite3 with pysqlite3-binary for deployment compatibility.
+- **Test config**: In `pyproject.toml` (not pytest.ini). Markers: `slow`, `integration`, `unit`. Tests use `unittest.mock`, no conftest.py.
+- **Debugging**: Check `analysis/error_reports/`, enable `DEBUG_PROMPTS=true`, or use LangSmith traces (`LANGSMITH_TRACING_V2=true`).

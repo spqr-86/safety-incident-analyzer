@@ -30,7 +30,7 @@ from src.advanced_generation_metrics import (
 from src.custom_evaluators import check_correctness
 from src.llm_factory import get_llm
 from src.final_chain import create_final_hybrid_chain
-from agents.workflow import AgentWorkflow
+from agents.multiagent_rag import MultiAgentRAGWorkflow
 
 
 def load_dataset(dataset_path: str) -> List[Dict[str, Any]]:
@@ -73,12 +73,16 @@ def evaluate_single_query(
     generation_start = time.time()
     try:
         if mode == "mas":
-            # MAS пайплайн (через LangGraph)
-            res = chain.full_pipeline(question, retriever)
-            answer = res.get("draft_answer", "")
-            thought = res.get("research_thought", "")
-            # Используем все найденные документы для контекста оценки
-            context = "\n\n".join([d.page_content for d in retrieved_docs[:20]])
+            # Multi-Agent RAG (через LangGraph ReAct agent)
+            res = chain.invoke(question)
+            answer = res.get("final_answer", "")
+            thought = res.get("draft_answer", "")
+            # Контекст из найденных агентом чанков, fallback на retriever
+            chunks = res.get("chunks_found", [])
+            if chunks:
+                context = "\n\n".join(c.get("text", "") for c in chunks)
+            else:
+                context = "\n\n".join([d.page_content for d in retrieved_docs[:20]])
         else:
             # Стандартный RAG (цепочка LangChain)
             response = chain.invoke({"question": question})
@@ -226,8 +230,8 @@ def main():
     rag_chain, retriever = create_final_hybrid_chain()
 
     if args.mode == "mas":
-        print("🤖 Загрузка MAS Workflow...")
-        chain = AgentWorkflow()
+        print("🤖 Загрузка Multi-Agent RAG Workflow...")
+        chain = MultiAgentRAGWorkflow(retriever)
     else:
         chain = rag_chain
 

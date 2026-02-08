@@ -2,64 +2,72 @@
 
 ## ⚡ TL;DR
 
-**Что это:** RAG-система с мульти-агентным контролем качества (LangGraph) и гибридным поиском (Chroma + BM25 + FlashRank).
+**Что это:** RAG-система с мульти-агентным контролем качества (LangGraph), гибридным поиском (Chroma + BM25 + FlashRank) и ReAct-агентами с thinking levels.
 
 **Топ-3 команды:**
 1. `python index.py` — индексация документов
 2. `streamlit run app.py` — запуск интерфейса
 3. `pytest` — запуск тестов
 
-**Ключевые файлы:** `agents/workflow.py`, `src/final_chain.py`, `index.py`
+**Ключевые файлы:** `agents/multiagent_rag.py`, `src/final_chain.py`, `config/term_glossary.yaml`, `index.py`
 
 ---
 
 ## ⚙️ Как это работает
 
-Система использует **LangGraph** для оркестрации агентов. Процесс обработки запроса выглядит так:
+Система использует **LangGraph** для оркестрации агентов. Два подхода (выбираются в UI):
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Workflow as AgentWorkflow
-    participant Relevance as RelevanceChecker
-    participant Research as ResearchAgent
-    participant Verify as VerificationAgent
+1. **Multi-Agent RAG** (`agents/multiagent_rag.py`) — основной подход с ReAct-агентами. Подробнее ниже.
+2. **Simple RAG Chain** (`src/final_chain.py`) — legacy fallback: гибридный поиск → FlashRank rerank → LLM.
 
-    User->>Workflow: Запрос
-    Workflow->>Relevance: Проверка релевантности
-    alt Irrelevant
-        Relevance-->>Workflow: CANNOT_ANSWER
-        Workflow-->>User: Отказ
-    else Relevant
-        Relevance-->>Workflow: CAN_ANSWER / PARTIAL
-        loop Research Loop (Max 3)
-            Workflow->>Research: Поиск и генерация (CoT + Normative Filter)
-            Note right of Research: Анализ Found/Not Found, ответ в <answer>
-            Research-->>Workflow: Черновик ответа + Ход мыслей
-            Workflow->>Verify: Проверка фактов и логики
-            alt Good
-                Verify-->>Workflow: CORRECT
-                Workflow-->>User: Финальный ответ + Chain-of-Thought
-            else Bad
-                Verify-->>Workflow: REVISE (Замечания + Logic Leap Check)
-                Note right of Workflow: Возврат на доработку (increment loops)
-            end
-        end
-        alt Max Loops Reached
-            Workflow-->>User: Ответ (Partial) + Оговорка о верификации
-        end
-    end
-```
-
-### Основные этапы
+### Основные этапы (Multi-Agent RAG)
 
 | Step | Component | Action |
 |------|-----------|--------|
 | 1. Ingestion | `index.py` | Загрузка и индексация документов в ChromaDB. См. [DATA_PIPELINE.md](../DATA_PIPELINE.md) |
-| 2. Retrieval | `src/final_chain.py` | Гибридный поиск с `ApplicabilityAwareRetriever` (расширение запроса для общих норм) |
-| 3. Relevance Check | `agents/relevance_checker.py` | Классификация вопроса с использованием CoT (CAN_ANSWER/PARTIAL/NO) |
-| 4. Generation | `agents/research_agent.py` | Фильтрация атрибутов (Normative Accuracy), генерация ответа в `<answer>` |
-| 5. Verification | `agents/verification_agent.py` | Проверка на галлюцинации и "Logic Leaps", возврат фидбека (макс 3 итерации) |
+| 2. Term Expansion | `config/term_glossary.yaml` | Детерминированная расшифровка доменных сокращений (программа А → официальный термин) |
+| 3. Filter | `agents/multiagent_rag.py` | Regex-фильтр классифицирует запрос → chitchat / out_of_scope / rag (без LLM) |
+| 4. Search & Answer | RAG Agent (ReAct) | Единый агент с `search_documents` + `visual_proof`, условная декомпозиция |
+| 5. Verification | Verifier | Проверка по 6 критериям (JSON), ревизия при необходимости (макс 1) |
+
+---
+
+## 🤖 Multi-Agent RAG (ReAct-агент)
+
+Основной подход (`agents/multiagent_rag.py`). Единый RAG Agent — автономный ReAct-агент, который сам решает, когда искать, когда использовать visual_proof и нужна ли декомпозиция.
+
+```mermaid
+flowchart TD
+    Q[Вопрос] --> Glossary[Term Glossary - config/term_glossary.yaml]
+    Glossary --> Filter[Regex Filter - _classify_query]
+    Filter -->|chitchat / out_of_scope| Direct[Direct Response]
+    Filter -->|rag| Agent[RAG Agent - Flash, thinking: 8192]
+
+    Agent --> Verifier[Verifier - Flash, thinking: 1024]
+
+    Verifier -->|approved| Final[Format Final]
+    Verifier -->|needs_revision, count <= 1| Agent
+    Verifier -->|max revisions| Final
+```
+
+### Ключевые компоненты
+
+| Компонент | Модель | Thinking | Задача |
+|-----------|--------|----------|--------|
+| Regex Filter | — (regex) | — | Детерминированная классификация (chitchat / oos / rag) |
+| RAG Agent | Gemini Flash | 8192 | Поиск, условная декомпозиция, visual_proof (ReAct) |
+| Verifier | Gemini Flash | 1024 | Проверка по 6 критериям (JSON) |
+
+### Инструменты агентов
+
+- **`search_documents`**: Гибридный поиск + Smart Context Extension (скользящее окно ±2 чанка)
+- **`visual_proof`**: `mode="show"` (вырезка из PDF) или `mode="analyze"` (VLM-анализ страницы с красной рамкой)
+
+### Потоки данных
+
+- **Term Glossary**: `config/term_glossary.yaml` содержит маппинг неофициальных доменных сокращений → официальные термины. Применяется детерминированно до regex-фильтра. Использует stem-based matching для русской морфологии ("программы А" → матчит "программа а"). Если термин не найден в глоссарии, агент получает инструкцию из BASE_RULES (case 10) для self-service поиска.
+- **Ревизия**: Верификатор возвращает `needs_revision` → агент получает предыдущий `draft_answer` + feedback для точечного исправления
+- **Общие правила**: `prompts/common/base_rules.j2` — макрос с запретами, правилами visual_proof, 10 краевыми случаями (включая интеграцию с глоссарием)
 
 ---
 
@@ -67,9 +75,10 @@ sequenceDiagram
 
 Система действует как строгое "нормативное зеркало". Она не пытается угадать намерения пользователя, а отражает только те факты, которые явно прописаны в нормах:
 
-1.  **Фильтрация атрибутов**: Разделение запроса на нормативно значимые термины ( Found) и "бытовой шум" (Not Found).
+1.  **Фильтрация атрибутов**: Разделение запроса на нормативно значимые термины (Found) и "бытовой шум" (Not Found).
 2.  **Запрет на домысливание**: Мы не приравниваем "бухгалтера" к "офису", если это не написано в документе. Мы отвечаем: "Для бухгалтера норм нет. Общие нормы для ПЭВМ такие: ...".
-3.  **Стабилизация графа**: Счетчик `loops` вынесен в узел графа, что гарантирует сохранение состояния и корректную остановку цикла после 3 попыток.
+3.  **Доменный глоссарий**: "Программа А/Б/В" и другие неофициальные сокращения автоматически расшифровываются через `config/term_glossary.yaml` до обработки агентом. Для неизвестных сокращений агент получает fallback-инструкцию (BASE_RULES case 10).
+4.  **Стабилизация графа**: `MAX_REVISIONS=1` ограничивает цикл ревизии, предотвращая бесконечную рекурсию.
 
 ---
 
@@ -90,11 +99,11 @@ streamlit run app.py     # Запуск UI
 Изучите `src/final_chain.py`, чтобы разобраться в механике поиска и генерации.
 
 **Хочу понять [Agents]:**
-Смотрите `agents/workflow.py` для понимания графа переходов состояний.
+Смотрите `agents/multiagent_rag.py` для понимания графа переходов состояний.
 
 **Добавить новую фичу:**
 1. Создайте нового агента в `agents/`.
-2. Добавьте узел (node) в граф в `agents/workflow.py`.
+2. Добавьте узел (node) в граф в `agents/multiagent_rag.py`.
 
 **Исправить ошибку:**
 1. Проверьте логи ошибок в `analysis/error_reports`.
@@ -116,10 +125,10 @@ streamlit run app.py     # Запуск UI
 
 | Директория | Описание |
 |------------|----------|
-| `agents/` | Логика мульти-агентной системы (LangGraph). Содержит `RelevanceChecker`, `ResearchAgent`, `VerificationAgent`. |
+| `agents/` | Логика мульти-агентных систем: `multiagent_rag.py` (ReAct-агенты с LangGraph). |
 | `prompts/` | Централизованное хранилище промптов (Jinja2) и реестр версий (`registry.yaml`). |
 | `src/` | Ядро RAG-логики: цепочки (`final_chain.py`), работа с векторной БД (`vector_store.py`), фабрики LLM. |
-| `config/` | Настройки приложения и переменных окружения (`settings.py`). |
+| `config/` | Настройки приложения (`settings.py`) и доменный глоссарий (`term_glossary.yaml`). |
 | `eval/` | Скрипты для оценки качества ответов (DeepEval, Ragas). |
 | `tests/` | Юнит и интеграционные тесты. |
 | `analysis/` | Отчеты об ошибках и логи работы. |
@@ -129,36 +138,29 @@ streamlit run app.py     # Запуск UI
 ## 🔬 Углублённо
 
 <details>
-<summary><b>Алгоритм работы (20 шагов)</b></summary>
+<summary><b>Алгоритм работы Multi-Agent RAG (10 шагов)</b></summary>
 
 1. Пользователь вводит запрос.
-2. Система инициализирует состояние графа.
-3. `RelevanceChecker` анализирует запрос.
-4. LLM определяет класс запроса (Relevant/Not).
-5. Если не релевантно -> ответ-заглушка.
-6. Если релевантно -> передача управления `ResearchAgent`.
-7. `ResearchAgent` формирует поисковый запрос.
-8. Retriever выполняет поиск в ChromaDB (векторный).
-9. Retriever выполняет поиск BM25 (ключевые слова).
-10. Результаты объединяются (Ensemble Retriever).
-11. FlashRank переранжирует результаты для повышения точности.
-12. Топ-K документов передаются в контекст.
-13. LLM генерирует черновик ответа по контексту.
-14. Ответ передается `VerificationAgent`.
-15. `VerificationAgent` сверяет утверждения с контекстом.
-16. Оценка качества (Correctness/Faithfulness).
-17. Если оценка высокая -> вывод ответа.
-18. Если есть ошибки -> формирование фидбека.
-19. Возврат к `ResearchAgent` (цикл исправления, макс. 2 раза).
-20. Финальный вывод результата пользователю.
+2. Term Glossary расширяет запрос (если найдены доменные сокращения из `config/term_glossary.yaml`).
+3. Regex-фильтр (`_classify_query`) классифицирует запрос → chitchat / out_of_scope / rag.
+4. Если chitchat/out_of_scope → прямой ответ без RAG.
+5. RAG Agent (Flash, thinking: 8192) получает запрос + system prompt с BASE_RULES.
+6. Агент автономно вызывает `search_documents` (гибридный поиск + Smart Context Extension). При необходимости декомпозирует составной вопрос.
+7. При необходимости агент вызывает `visual_proof` (VLM-анализ таблиц и обрезанных чанков).
+8. Агент формирует ответ с блоком ===STATUS=== / ===ANSWER===.
+9. Verifier (Flash, thinking: 1024) проверяет черновик по 6 критериям. Если needs_revision и revision_count <= 1 → возврат агенту с draft_answer + feedback.
+10. Финальный ответ пользователю (с оговоркой при неуспешной верификации).
 
 </details>
 
 ### Known Issues / TODO
 - [ ] Оптимизация скорости FlashRank (задержка на CPU).
-- [ ] Улучшение обработки таблиц в PDF документах.
+- [x] Улучшение обработки таблиц в PDF документах (visual_proof с VLM).
 - [ ] Добавление памяти диалога (Chat History) в LangGraph.
-- [ ] Расширение набора тестов для агентов.
+- [x] Расширение набора тестов для агентов (27 тестов для Multi-Agent RAG).
+- [ ] Калибровка thinking budget (8192/1024) под реальные запросы.
+- [x] Доменный глоссарий для детерминированной расшифровки сокращений.
+- [ ] Логирование промахов глоссария для итеративного пополнения.
 
 ### Prompt Management System
 
@@ -169,13 +171,17 @@ streamlit run app.py     # Запуск UI
 
 Подробнее см. в руководстве: [Prompt Management Guide](../guides/prompt-management.md).
 
-### Relevance Checker
-Первый рубеж обороны. Классифицирует вопрос пользователя на три категории:
-- `CAN_ANSWER`: Вопрос по теме охраны труда.
-- `PARTIAL`: Частично по теме, требует уточнения.
-- `NO`: Вопрос не по теме (спам, chit-chat).
+### Regex Filter (Multi-Agent RAG)
+Классификация запроса в `agents/multiagent_rag.py` через regex-паттерны (`_classify_query`):
+- `chitchat`: Приветствия, благодарности, вопросы о боте (regex: `привет`, `спасибо`, `кто ты`...).
+- `out_of_scope`: Погода, анекдоты, стихи и т.д. (regex: `какая погода`, `напиши стих`...).
+- `rag`: Всё остальное → RAG Agent.
 
-### Verification Agent
-Критик, который проверяет сгенерированный ответ на соответствие найденным документам (контексту).
-- Если галлюцинаций нет -> ответ отдается пользователю.
-- Если есть ошибки -> отправляет на перегенерацию с указанием, что исправить.
+### Verifier (Multi-Agent RAG)
+Проверяет черновик ответа по 6 критериям:
+1. Обоснованность (groundedness)
+2. Релевантность
+3. Полнота
+4. Непротиворечивость
+5. Точность цитирования
+6. Краевые случаи (logic leaps, missing entities)
