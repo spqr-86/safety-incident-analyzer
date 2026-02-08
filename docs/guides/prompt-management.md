@@ -16,17 +16,19 @@
 
 ```text
 prompts/
-├── registry.yaml       # Глобальный реестр версий
-├── common/             # Общие шаблоны и фрагменты
-│   ├── base.j2         # Базовый системный промпт
-│   ├── applicability_macros.j2 # Макросы для области применимости
-│   └── normative_philosophy.j2 # Философия "Нормативной точности"
-├── agents/             # Промпты для агентов
-│   ├── research_v1.j2
-│   └── verification_v1.j2
-└── chains/             # Промпты для RAG-цепочек
+├── registry.yaml              # Глобальный реестр версий
+├── common/                    # Общие шаблоны и фрагменты
+│   └── base_rules.j2          # BASE_RULES макрос (Multi-Agent RAG, 10 краевых случаев)
+├── agents/                    # Промпты для агентов
+│   ├── query_expansion_v1.j2  # Query Expansion v1 (legacy)
+│   ├── query_expansion_v2.j2  # Query Expansion v2 (без хардкода) ← active
+│   ├── rag_agent_v1.j2        # RAG Agent (единый ReAct-агент с условной декомпозицией) ← active
+│   └── verifier_v2.j2         # Verifier v2 (6 критериев, JSON) ← active
+└── chains/                    # Промпты для RAG-цепочек
     └── ultimate_v1.j2
 ```
+
+**Связанный файл:** `config/term_glossary.yaml` — доменный глоссарий для детерминированного расширения запросов (не Jinja2, но часть prompt engineering).
 
 ---
 
@@ -35,11 +37,16 @@ prompts/
 Этот файл связывает логический `prompt_id` с конкретными версиями шаблонов.
 
 ```yaml
-research_agent:
-  active_version: "v1"       # Версия по умолчанию
+multiagent_rag_agent:
+  active_version: "v1"
   versions:
-    v1: "agents/research_v1.j2"
-    v2: "agents/research_v2.j2"  # Экспериментальная версия
+    v1: "agents/rag_agent_v1.j2"  # Единый ReAct-агент
+
+applicability_retriever:
+  active_version: "v2"
+  versions:
+    v1: "agents/query_expansion_v1.j2"
+    v2: "agents/query_expansion_v2.j2"  # Без хардкода маппингов
 ```
 
 ---
@@ -110,11 +117,39 @@ Python-код агентов автоматически парсит эти те
 - **Found Terms**: Ответ строится только по терминам, найденным в нормах.
 - **Not Found Terms**: Если в вопросе есть "бытовой шум" (фамилии, неофициальные названия), агент явно указывает на отсутствие требований для них, не делая логических скачков (Logic Leaps).
 
-### 3. Форматированный JSON-вывод
-Для агентов-верификаторов используются теги `<json>...</json>`, что делает парсинг результатов LLM более устойчивым к лишнему тексту в ответе.
+### 3. BASE_RULES макрос (Multi-Agent RAG)
+`prompts/common/base_rules.j2` — общий макрос `{% macro base_rules() %}`, импортируемый в `rag_agent_v1.j2`. Содержит:
+- Абсолютные запреты (нет галлюцинаций, нет экстраполяции)
+- Предобработка запроса (суть vs идентификаторы)
+- Правила visual_proof (когда analyze vs show)
+- 10 краевых случаев (устаревшие ссылки, пересечения документов, негативные вопросы, интеграция с глоссарием, fallback для неизвестных сокращений и т.д.)
+- Формат ответа (прямой ответ, дословные цитаты)
 
-### 4. Стабилизация циклов
-В промпты и логику графа внедрены стоп-условия. Агент Research получает фидбек от Verification, но количество итераций ограничено (MAX_RERUNS=3), что предотвращает бесконечную рекурсию.
+### 3a. Доменный глоссарий (Term Glossary)
+`config/term_glossary.yaml` — YAML-словарь неофициальных доменных сокращений. Применяется **до** LLM (детерминированно):
+- Загружается при инициализации `MultiAgentRAGWorkflow`
+- Stem-based matching с русской морфологией ("программы А" → матчит "программа а")
+- К запросу дописывается блок `[Глоссарий: термин → расшифровка]`
+- Агент использует расшифровку для поиска и ответа (BASE_RULES case 9)
+- Для терминов вне глоссария — fallback через LLM-инструкцию (BASE_RULES case 10)
+
+### 4. ReAct-агент со статусными блоками
+RAG Agent возвращает структурированный вывод:
+```
+===STATUS===
+FOUND / NOT_FOUND / PARTIAL
+===ANSWER===
+<текст ответа>
+===UNANSWERED===
+- подвопрос (если есть)
+```
+Статус используется верификатором и форматирующим узлом графа.
+
+### 5. Форматированный JSON-вывод
+Verifier v2 использует `response_mime_type="application/json"` для гарантированного JSON-вывода. Fallback-парсер обрабатывает markdown code blocks и raw JSON.
+
+### 6. Стабилизация циклов
+- **Multi-Agent RAG**: MAX_REVISIONS=1 цикл ревизии. При ревизии агент получает предыдущий `draft_answer` + feedback верификатора.
 
 ---
 

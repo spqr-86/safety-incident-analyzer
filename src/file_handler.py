@@ -18,7 +18,7 @@ from docling_core.types.doc.document import (
     TextItem,
     ListItem,
 )
-from langchain.docstore.document import Document
+from langchain_core.documents import Document
 
 from config import constants
 from config.settings import settings

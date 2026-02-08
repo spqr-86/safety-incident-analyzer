@@ -8,7 +8,7 @@ from typing import List, Optional, Dict
 from langchain_core.tools import tool
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import HumanMessage
-from langchain.docstore.document import Document
+from langchain_core.documents import Document
 from langchain_chroma import Chroma
 
 from config.settings import settings

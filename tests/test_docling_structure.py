@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
 import json
-from langchain.docstore.document import Document
+from langchain_core.documents import Document
 from src.file_handler import DocumentProcessor
 
 # Correct imports based on inspection

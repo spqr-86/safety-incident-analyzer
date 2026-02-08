@@ -1,39 +1,20 @@
-research_agent:
-  active_version: "v2"
-  versions:
-    v1: "agents/research_v1.j2"
-    v2: "agents/research_v2.j2"
-
-relevance_checker:
-  active_version: "v2"
-  versions:
-    v1: "agents/relevance_v1.j2"
-    v2: "agents/relevance_v2.j2"
-
-verification_agent:
-  active_version: "v2"
-  versions:
-    v1: "agents/verification_v1.j2"
-    v2: "agents/verification_v2.j2"
-
-ultimate_chain:
-  active_version: "v1"
-  versions:
-    v1: "chains/ultimate_v1.j2"
-    v2: "chains/ultimate_v2.j2"
-
 final_chain:
   active_version: "v1"
   versions:
     v1: "chains/ultimate_v1.j2"
-    v2: "chains/ultimate_v2.j2"
 
 applicability_retriever:
-  active_version: "v1"
+  active_version: "v2"
   versions:
     v1: "agents/query_expansion_v1.j2"
+    v2: "agents/query_expansion_v2.j2"
 
-universal_agent:
+multiagent_rag_agent:
   active_version: "v1"
   versions:
-    v1: "agents/universal_v1.j2"
+    v1: "agents/rag_agent_v1.j2"
+
+multiagent_verifier:
+  active_version: "v2"
+  versions:
+    v2: "agents/verifier_v2.j2"

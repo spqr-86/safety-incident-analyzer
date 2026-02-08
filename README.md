@@ -23,6 +23,8 @@
 *   ✅ 📄 **Универсальную загрузку**: Автоматическая конвертация PDF/DOCX в Markdown с помощью Docling.
 *   ✅ 💬 **Контекстный диалог**: Чат с визуализацией хода рассуждений агента (Chain-of-Thought).
 *   ✅ 📊 **Расширенная оценка**: Поддержка тестирования в режимах простого RAG и многоагентной системы (MAS).
+*   ✅ 🤖 **Multi-Agent RAG с ReAct-агентами**: Автономные RAG-агенты с инструментами поиска, визуальным подтверждением, thinking levels и верификацией (Gemini 3 / OpenAI).
+*   ✅ 📖 **Доменный глоссарий**: Детерминированное расширение запросов — неофициальные сокращения ("программа А") автоматически разворачиваются в официальные термины до обработки агентом.
 
 ---
 
@@ -40,6 +42,12 @@
     *   `VerificationAgent`: Проверяет факты в формате JSON, минимизируя галлюцинации.
 4.  **Prompt Management System v2**: Поддержка продвинутых техник (Few-Shot, Negative Constraints, Role Prompting).
 5.  **Evaluation Framework**: Скрипты для замера 11 метрик качества в разных режимах работы (`--mode mas/rag`).
+6.  **Multi-Agent RAG с ReAct-агентом (Gemini 3)**: Упрощённая архитектура:
+    *   Regex-фильтр: Детерминированная классификация chitchat / out_of_scope / rag (без LLM)
+    *   `RAG Agent` (Flash, thinking: 8192): Единый ReAct-агент с `search_documents` + `visual_proof`, условная декомпозиция для составных вопросов
+    *   `Verifier` (Flash, thinking: 1024): JSON-верификация по 6 критериям (approved / needs_revision)
+    *   Term Glossary: детерминированная расшифровка доменных сокращений перед фильтром
+    *   Поддержка OpenAI и Gemini как LLM-провайдеров
 
 ### 📊 Целевые метрики
 
@@ -58,7 +66,7 @@
 
 **Предварительные требования:**
 - Python 3.11+
-- API ключи (GigaChat или OpenAI)
+- API ключи (OpenAI, Gemini)
 
 **1. Клонирование и установка:**
 ```bash
@@ -71,9 +79,9 @@ pip install -r requirements.txt
 Создайте файл `.env` в корне проекта (см. `.env.example`):
 ```env
 # LLM Provider
-LLM_PROVIDER=gigachat # или openai
-GIGACHAT_CREDENTIALS=your_token
+LLM_PROVIDER=openai
 OPENAI_API_KEY=your_key
+GEMINI_API_KEY=your_gemini_key
 
 # Embeddings
 EMBEDDING_PROVIDER=openai # или hf_api, local
@@ -139,14 +147,14 @@ flowchart TD
         Rerank --> Context[Top Context]
     end
 
-    subgraph Agents [LangGraph Workflow]
-        Context --> RC[Relevance Checker]
-        RC -->|Valid| Research[Research Agent]
-        RC -->|Invalid| Stop[Refusal Response]
-        Research -->|Normative Filter| Verify[Verification Agent]
-        Verify -->|Success| Final[Final Answer]
-        Verify -->|Failed / Loop < 3| Research
-        Verify -->|Max Loops| Final
+    subgraph MultiAgent [Multi-Agent RAG - ReAct Agent]
+        Q2[Вопрос] --> Glossary[Term Glossary]
+        Glossary --> Filter[Regex Filter]
+        Filter -->|chitchat/out_of_scope| Direct[Direct Response]
+        Filter -->|rag| Agent[RAG Agent - Flash, thinking: 8192]
+        Agent --> VerifyMA[Verifier - Flash]
+        VerifyMA -->|approved| FinalMA[Format Final]
+        VerifyMA -->|needs_revision| Agent
     end
 ```
 
@@ -159,6 +167,7 @@ flowchart TD
 | **Язык** | Python 3.11+ |
 | **UI** | Streamlit |
 | **LLM Framework** | LangChain, LangGraph |
+| **LLM Providers** | OpenAI (GPT-4o), Google Gemini 3 |
 | **Vector Store** | ChromaDB |
 | **ETL** | Docling |
 | **Reranking** | FlashRank |
@@ -172,9 +181,11 @@ flowchart TD
 *   ✅ Многоагентная система проверки (LangGraph)
 *   ✅ Индексация документов (Docling)
 *   ✅ Веб-интерфейс (Streamlit)
+*   ✅ Multi-Agent RAG с ReAct-агентом и thinking levels (Gemini 3)
+*   ✅ Visual Proof (VLM-анализ PDF-страниц)
+*   ✅ Term Glossary (детерминированная расшифровка доменных сокращений)
 *   🔄 Улучшение метрик качества (Correctness, Faithfulness)
 *   🔄 Расширение тестового датасета
-*   🔄 Внедрение CI/CD для оценки качества
 
 ---
 

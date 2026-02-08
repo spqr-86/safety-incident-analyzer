@@ -16,13 +16,16 @@ from config.settings import settings
 from src.final_chain import create_final_hybrid_chain
 from utils.logging import logger
 
-# Новый Universal Agent
+# Multi-Agent RAG Workflow
 try:
-    from src.universal_agent import UniversalAgent
+    from langchain_community.retrievers import BM25Retriever
+    from langchain_core.documents import Document
+    from langchain_classic.retrievers import EnsembleRetriever
+    from agents.multiagent_rag import MultiAgentRAGWorkflow
 
     MAS_AVAILABLE = True
 except Exception as e:
-    logger.warning(f"Universal Agent is not available: {e}")
+    logger.warning(f"Multi-Agent RAG is not available: {e}")
     MAS_AVAILABLE = False
 
 # Индексация «по кнопке»
@@ -74,9 +77,9 @@ with st.sidebar:
 
     # MAS toggle
     if MAS_AVAILABLE:
-        mas_mode = st.toggle("🧠 Умный Агент (ReAct + Визуализация)", value=True)
+        mas_mode = st.toggle("🧠 Multi-Agent RAG (Router → RAG → Verifier)", value=True)
     else:
-        st.info("Агент недоступен.")
+        st.info("Multi-Agent RAG недоступен.")
         mas_mode = False
 
     st.divider()
@@ -118,7 +121,7 @@ def load_resources():
     """
     Грузим один раз:
       - гибридную RAG-цепочку (retriever + LLM)
-      - Universal Agent
+      - Multi-Agent RAG Workflow
     """
     # Проверяем наличие БД
     if not os.path.exists(settings.CHROMA_DB_PATH) or not os.listdir(
@@ -133,7 +136,14 @@ def load_resources():
         st.error(f"Произошла ошибка при подготовке RAG-цепочки: {e}")
         return None, None, None
 
-    agent = UniversalAgent(retriever) if MAS_AVAILABLE else None
+    # Multi-Agent RAG Workflow (использует OpenAI по умолчанию)
+    agent = None
+    if MAS_AVAILABLE:
+        try:
+            agent = MultiAgentRAGWorkflow(retriever, llm_provider="openai")
+        except Exception as e:
+            logger.warning(f"Failed to init MultiAgentRAGWorkflow: {e}")
+
     return (chain, retriever, agent)
 
 
@@ -151,8 +161,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": "Здравствуйте! Я использую новый подход ReAct. "
-            "Задайте вопрос, и я найду ответ с визуальным подтверждением из документов.",
+            "content": "Здравствуйте! Я использую Multi-Agent RAG с маршрутизацией и верификацией. "
+            "Задайте вопрос по охране труда, и я найду ответ в нормативных документах.",
         }
     ]
 
@@ -185,12 +195,12 @@ if user_query:
     # Ветка ответа
     with st.chat_message("assistant"):
         if mas_mode and agent:
-            # --- AGENT MODE ---
-            with st.spinner("Агент думает (ReAct Loop)..."):
+            # --- MULTI-AGENT RAG MODE ---
+            with st.spinner("Multi-Agent RAG (Router → Search → Generate → Verify)..."):
                 try:
                     result = agent.invoke(user_query)
 
-                    answer = result.get("draft_answer", "").strip()
+                    answer = result.get("final_answer", "").strip()
 
                     if not answer:
                         answer = "Не удалось сформировать ответ."

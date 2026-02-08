@@ -205,3 +205,5 @@ storage_llamaindex/
 analysis/error_reports/
 app.log
 *.pkl
+benchmarks/
+static/visuals/
