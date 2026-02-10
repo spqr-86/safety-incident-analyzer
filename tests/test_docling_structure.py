@@ -1,11 +1,9 @@
-import pytest
 from unittest.mock import MagicMock
 import json
-from langchain_core.documents import Document
 from src.file_handler import DocumentProcessor
 
 # Correct imports based on inspection
-from docling.datamodel.document import SectionHeaderItem, TextItem, ListItem
+from docling.datamodel.document import SectionHeaderItem, TextItem
 from docling.datamodel.base_models import BoundingBox
 from docling_core.types.doc.document import ProvenanceItem
 

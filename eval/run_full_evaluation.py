@@ -17,11 +17,6 @@ import argparse
 # Добавляем корень проекта в путь
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.retrieval_metrics import (
-    evaluate_retrieval,
-    hit_rate_at_k,
-    mean_reciprocal_rank,
-)
 from src.advanced_generation_metrics import (
     evaluate_faithfulness,
     evaluate_answer_relevance,

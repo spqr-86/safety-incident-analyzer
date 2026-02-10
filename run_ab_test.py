@@ -13,7 +13,6 @@ from src.advanced_generation_metrics import (
 )
 
 # --- Импортируем цепочки кандидаты ---
-from src.final_chain import create_final_hybrid_chain
 from src.llm_factory import get_llm
 from src.ultimate_chain import create_ultimate_chain
 

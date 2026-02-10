@@ -2,7 +2,7 @@ import os
 import yaml
 import hashlib
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, TemplateNotFound
 
 

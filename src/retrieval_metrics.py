@@ -10,10 +10,12 @@
 """
 
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict
 
 
-def hit_rate_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) -> float:
+def hit_rate_at_k(
+    retrieved_docs: List[str], relevant_docs: List[str], k: int = 10
+) -> float:
     """
     Hit Rate @ K: Найден ли хотя бы один релевантный документ в топ-K.
 
@@ -55,7 +57,9 @@ def mean_reciprocal_rank(
     return np.mean(reciprocal_ranks) if reciprocal_ranks else 0.0
 
 
-def precision_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) -> float:
+def precision_at_k(
+    retrieved_docs: List[str], relevant_docs: List[str], k: int = 10
+) -> float:
     """
     Precision @ K: Доля релевантных документов среди топ-K извлеченных.
 
@@ -72,7 +76,9 @@ def precision_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int =
     return relevant_in_top_k / k if k > 0 else 0.0
 
 
-def recall_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) -> float:
+def recall_at_k(
+    retrieved_docs: List[str], relevant_docs: List[str], k: int = 10
+) -> float:
     """
     Recall @ K: Доля найденных релевантных документов от всех релевантных.
 

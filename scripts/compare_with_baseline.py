@@ -35,7 +35,9 @@ def load_latest_result(results_path: str) -> Dict[str, Any]:
     return results[-1]
 
 
-def compare_metrics(baseline: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+def compare_metrics(
+    baseline: Dict[str, Any], current: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Сравнивает текущие метрики с baseline.
 
@@ -103,8 +105,10 @@ def compare_metrics(baseline: Dict[str, Any], current: Dict[str, Any]) -> Dict[s
         "improvements": len(comparison["improvements"]),
         "regressions": len(comparison["regressions"]),
         "stable": len(comparison["stable"]),
-        "overall_status": "✅ IMPROVED" if len(comparison["improvements"]) > len(comparison["regressions"]) else (
-            "❌ REGRESSED" if len(comparison["regressions"]) > 0 else "➖ STABLE"
+        "overall_status": (
+            "✅ IMPROVED"
+            if len(comparison["improvements"]) > len(comparison["regressions"])
+            else ("❌ REGRESSED" if len(comparison["regressions"]) > 0 else "➖ STABLE")
         ),
     }
 
@@ -133,7 +137,9 @@ def print_comparison(comparison: Dict[str, Any]) -> None:
             print(f"   • {item['metric']}")
             print(f"     Baseline: {item['baseline']:.3f}")
             print(f"     Текущее:  {item['current']:.3f}")
-            print(f"     Изменение: {sign}{item['change']:.3f} ({sign}{item['change_pct']:.1f}%)")
+            print(
+                f"     Изменение: {sign}{item['change']:.3f} ({sign}{item['change_pct']:.1f}%)"
+            )
 
     # Регрессии
     if comparison["regressions"]:
@@ -143,7 +149,9 @@ def print_comparison(comparison: Dict[str, Any]) -> None:
             print(f"   • {item['metric']}")
             print(f"     Baseline: {item['baseline']:.3f}")
             print(f"     Текущее:  {item['current']:.3f}")
-            print(f"     Изменение: {sign}{item['change']:.3f} ({sign}{item['change_pct']:.1f}%)")
+            print(
+                f"     Изменение: {sign}{item['change']:.3f} ({sign}{item['change_pct']:.1f}%)"
+            )
 
     # Стабильные
     if comparison["stable"]:
@@ -162,9 +170,7 @@ def save_comparison(comparison: Dict[str, Any], output_path: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Сравнить текущие метрики с baseline"
-    )
+    parser = argparse.ArgumentParser(description="Сравнить текущие метрики с baseline")
     parser.add_argument(
         "results",
         nargs="?",

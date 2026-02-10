@@ -12,7 +12,6 @@ import sys
 import argparse
 from pathlib import Path
 from typing import List, Dict, Any
-from datetime import datetime
 import csv
 
 
@@ -151,8 +150,12 @@ def print_trends_report(
             print(f"\n   {trend['emoji']} {metric_name}")
             print(f"      Первое значение:  {trend['first']:.3f}")
             print(f"      Последнее:        {trend['last']:.3f}")
-            print(f"      Изменение:        +{trend['change']:.3f} (+{trend['change_pct']:.1f}%)")
-            print(f"      Мин/Макс/Средн:   {trend['min']:.3f} / {trend['max']:.3f} / {trend['avg']:.3f}")
+            print(
+                f"      Изменение:        +{trend['change']:.3f} (+{trend['change_pct']:.1f}%)"
+            )
+            print(
+                f"      Мин/Макс/Средн:   {trend['min']:.3f} / {trend['max']:.3f} / {trend['avg']:.3f}"
+            )
 
     # Ухудшающиеся метрики
     if declining:
@@ -161,14 +164,20 @@ def print_trends_report(
             print(f"\n   {trend['emoji']} {metric_name}")
             print(f"      Первое значение:  {trend['first']:.3f}")
             print(f"      Последнее:        {trend['last']:.3f}")
-            print(f"      Изменение:        {trend['change']:.3f} ({trend['change_pct']:.1f}%)")
-            print(f"      Мин/Макс/Средн:   {trend['min']:.3f} / {trend['max']:.3f} / {trend['avg']:.3f}")
+            print(
+                f"      Изменение:        {trend['change']:.3f} ({trend['change_pct']:.1f}%)"
+            )
+            print(
+                f"      Мин/Макс/Средн:   {trend['min']:.3f} / {trend['max']:.3f} / {trend['avg']:.3f}"
+            )
 
     # Стабильные метрики
     if stable:
         print(f"\n➖ СТАБИЛЬНЫЕ МЕТРИКИ ({len(stable)}):")
         for metric_name, trend in stable:
-            print(f"   • {metric_name}: {trend['avg']:.3f} (вариация: {abs(trend['change_pct']):.1f}%)")
+            print(
+                f"   • {metric_name}: {trend['avg']:.3f} (вариация: {abs(trend['change_pct']):.1f}%)"
+            )
 
     # Рекомендации
     print("\n💡 РЕКОМЕНДАЦИИ:")

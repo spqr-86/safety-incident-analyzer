@@ -1,14 +1,13 @@
-import re
 from typing import List, Optional, Dict, Any
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.vectorstores import VectorStore
-from langchain_core.runnables import Runnable
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_community.retrievers import BM25Retriever
+from pydantic import PrivateAttr
 
 from .prompt_manager import PromptManager
 
@@ -19,10 +18,16 @@ class ApplicabilityRetriever(BaseRetriever):
     llm: Any  # Changed to Any to avoid Pydantic validation issues with RunnableRetry
     search_kwargs: Dict[str, Any] = {"k": 10}
     weights: List[float] = [0.6, 0.4]  # Semantic, Keyword
-    query_expansion: bool = True  # Disable for Multi-Agent (agent handles decomposition)
+    query_expansion: bool = (
+        True  # Disable for Multi-Agent (agent handles decomposition)
+    )
+    _expansion_cache: Dict[str, List[str]] = PrivateAttr(default_factory=dict)
 
     def _generate_queries(self, original_query: str) -> List[str]:
         """Генерирует вариации поискового запроса с помощью LLM."""
+        if original_query in self._expansion_cache:
+            return self._expansion_cache[original_query]
+
         prompt_manager = PromptManager()
         try:
             prompt_str = prompt_manager.render(
@@ -37,7 +42,10 @@ class ApplicabilityRetriever(BaseRetriever):
             # Добавляем оригинал, если его нет
             if original_query not in queries:
                 queries.insert(0, original_query)
-            return queries[:4]  # Ограничиваем сверху
+
+            final_queries = queries[:4]  # Ограничиваем сверху
+            self._expansion_cache[original_query] = final_queries
+            return final_queries
         except Exception:
             # Fallback если LLM сломалась или промпт не найден
             return [original_query]

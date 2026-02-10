@@ -16,7 +16,7 @@ def parse_perplexity_dataset(markdown_text: str) -> list[dict]:
 
     # Регулярное выражение для поиска вопросов (### Q1: ... ### Q25:)
     # Ищем паттерн: ### Q{number}: {question}
-    question_pattern = r'### Q(\d+): (.+?)\n'
+    question_pattern = r"### Q(\d+): (.+?)\n"
 
     # Находим все вопросы
     question_matches = list(re.finditer(question_pattern, markdown_text))
@@ -33,25 +33,28 @@ def parse_perplexity_dataset(markdown_text: str) -> list[dict]:
             end_pos = question_matches[i + 1].start()
         else:
             # Последний вопрос - ищем конец уровня или секции
-            next_level = markdown_text.find('## УРОВЕНЬ', start_pos)
-            meta_section = markdown_text.find('## МЕТАИНФОРМАЦИЯ', start_pos)
-            end_pos = min(x for x in [next_level, meta_section, len(markdown_text)] if x > start_pos)
+            next_level = markdown_text.find("## УРОВЕНЬ", start_pos)
+            meta_section = markdown_text.find("## МЕТАИНФОРМАЦИЯ", start_pos)
+            end_pos = min(
+                x
+                for x in [next_level, meta_section, len(markdown_text)]
+                if x > start_pos
+            )
 
         block = markdown_text[start_pos:end_pos]
 
         # Извлекаем ответ (после **Ответ**: или **Ответ:**)
-        answer_match = re.search(r'\*\*Ответ\*\*:\s*(.+?)(?=\n---|\n\n###|\Z)', block, re.DOTALL)
+        answer_match = re.search(
+            r"\*\*Ответ\*\*:\s*(.+?)(?=\n---|\n\n###|\Z)", block, re.DOTALL
+        )
 
         if answer_match:
             answer_text = answer_match.group(1).strip()
             # Очищаем ответ от лишних переносов и форматирования
-            answer_text = re.sub(r'\n+', ' ', answer_text)
-            answer_text = re.sub(r'\s+', ' ', answer_text)
+            answer_text = re.sub(r"\n+", " ", answer_text)
+            answer_text = re.sub(r"\s+", " ", answer_text)
 
-            questions.append({
-                'question': question_text,
-                'ground_truth': answer_text
-            })
+            questions.append({"question": question_text, "ground_truth": answer_text})
             print(f"✅ Q{q_number}: Извлечен вопрос и ответ")
         else:
             print(f"⚠️  Q{q_number}: Ответ не найден")
@@ -62,35 +65,38 @@ def parse_perplexity_dataset(markdown_text: str) -> list[dict]:
 def load_existing_dataset(csv_path: str) -> list[dict]:
     """Загружает существующий CSV dataset."""
     questions = []
-    with open(csv_path, 'r', encoding='utf-8') as f:
+    with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            questions.append({
-                'question': row['question'],
-                'ground_truth': row['ground_truth']
-            })
+            questions.append(
+                {"question": row["question"], "ground_truth": row["ground_truth"]}
+            )
     return questions
 
 
-def check_duplicates(new_questions: list[dict], existing_questions: list[dict]) -> tuple[list[dict], list[str]]:
+def check_duplicates(
+    new_questions: list[dict], existing_questions: list[dict]
+) -> tuple[list[dict], list[str]]:
     """
     Проверяет на дубликаты по тексту вопроса (нечеткое сравнение).
     Возвращает уникальные вопросы и список дубликатов.
     """
-    existing_questions_text = [q['question'].lower().strip() for q in existing_questions]
+    existing_questions_text = [
+        q["question"].lower().strip() for q in existing_questions
+    ]
 
     unique_questions = []
     duplicates = []
 
     for new_q in new_questions:
-        q_text_lower = new_q['question'].lower().strip()
+        q_text_lower = new_q["question"].lower().strip()
 
         # Нечеткое сравнение (первые 50 символов)
         is_duplicate = False
         for existing_q_text in existing_questions_text:
             if q_text_lower[:50] == existing_q_text[:50]:
                 is_duplicate = True
-                duplicates.append(new_q['question'][:80] + '...')
+                duplicates.append(new_q["question"][:80] + "...")
                 break
 
         if not is_duplicate:
@@ -101,25 +107,27 @@ def check_duplicates(new_questions: list[dict], existing_questions: list[dict]) 
 
 def save_merged_dataset(csv_path: str, all_questions: list[dict]):
     """Сохраняет объединенный dataset."""
-    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['question', 'ground_truth'])
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["question", "ground_truth"])
         writer.writeheader()
         writer.writerows(all_questions)
 
 
 def main():
     # Путь к markdown файлу от Perplexity
-    markdown_file = Path('perplexity_golden_dataset.md')
+    markdown_file = Path("perplexity_golden_dataset.md")
 
     if not markdown_file.exists():
         print(f"❌ Файл {markdown_file} не найден")
         print("\nИнструкция:")
-        print("1. Сохраните dataset от Perplexity в файл 'perplexity_golden_dataset.md'")
+        print(
+            "1. Сохраните dataset от Perplexity в файл 'perplexity_golden_dataset.md'"
+        )
         print("2. Запустите скрипт снова: python scripts/parse_perplexity_dataset.py")
         return
 
     # Читаем markdown
-    with open(markdown_file, 'r', encoding='utf-8') as f:
+    with open(markdown_file, "r", encoding="utf-8") as f:
         markdown_text = f.read()
 
     print("🔍 Парсинг золотого датасета от Perplexity...")
@@ -132,14 +140,16 @@ def main():
     print(f"📊 Извлечено вопросов: {len(new_questions)}")
 
     # Загружаем существующий dataset
-    existing_csv = Path('tests/dataset.csv')
+    existing_csv = Path("tests/dataset.csv")
     if existing_csv.exists():
         existing_questions = load_existing_dataset(str(existing_csv))
         print(f"📁 Существующих вопросов: {len(existing_questions)}")
 
         # Проверяем дубликаты
         print("\n🔎 Проверка на дубликаты...")
-        unique_questions, duplicates = check_duplicates(new_questions, existing_questions)
+        unique_questions, duplicates = check_duplicates(
+            new_questions, existing_questions
+        )
 
         if duplicates:
             print(f"⚠️  Найдено дубликатов: {len(duplicates)}")
@@ -163,7 +173,9 @@ def main():
     print("\n" + "=" * 70)
     print("✅ ГОТОВО!")
     print(f"   Всего вопросов в dataset: {len(all_questions)}")
-    print(f"   Новых добавлено: {len(new_questions) - len(duplicates) if existing_csv.exists() else len(new_questions)}")
+    print(
+        f"   Новых добавлено: {len(new_questions) - len(duplicates) if existing_csv.exists() else len(new_questions)}"
+    )
     print(f"   Файл: {existing_csv}")
     print("=" * 70)
 
@@ -178,5 +190,5 @@ def main():
         print(f"   A: {example['ground_truth'][:150]}...")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

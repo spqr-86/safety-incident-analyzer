@@ -15,11 +15,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from src.retrieval_metrics import (
-    hit_rate_at_k,
-    mean_reciprocal_rank,
-    precision_at_k,
-    recall_at_k,
-    ndcg_at_k,
     evaluate_retrieval,
     evaluate_retrieval_batch,
 )
@@ -46,7 +41,7 @@ def demo_retrieval_metrics():
     print(f"Relevant docs:  {relevant}")
 
     metrics = evaluate_retrieval(retrieved, relevant, k=5)
-    print(f"\nРезультаты:")
+    print("\nРезультаты:")
     for metric, value in metrics.items():
         print(f"  {metric}: {value:.3f}")
 
@@ -61,7 +56,7 @@ def demo_retrieval_metrics():
     print(f"Relevant docs:  {relevant_bad}")
 
     metrics_bad = evaluate_retrieval(retrieved_bad, relevant_bad, k=5)
-    print(f"\nРезультаты:")
+    print("\nРезультаты:")
     for metric, value in metrics_bad.items():
         print(f"  {metric}: {value:.3f}")
 
@@ -84,7 +79,7 @@ def demo_retrieval_metrics():
         rr = 1 / pos if pos > 0 else 0.0
         print(f"  Запрос {i}: {rel[0]} на позиции {pos} (RR={rr:.2f})")
 
-    print(f"\nСредние метрики:")
+    print("\nСредние метрики:")
     for metric, value in batch_metrics.items():
         print(f"  {metric}: {value:.3f}")
 
@@ -110,7 +105,7 @@ def demo_generation_metrics():
     print(f"\nИзвлеченные цитаты: {citations}")
 
     cite_metrics = evaluate_citation_quality(answer_good, "контекст", [])
-    print(f"\nМетрики цитирования:")
+    print("\nМетрики цитирования:")
     print(f"  Есть цитаты: {cite_metrics['has_citations']}")
     print(f"  Количество цитат: {cite_metrics['citation_count']}")
     print(f"  Уникальных цитат: {cite_metrics['unique_citation_count']}")
@@ -129,7 +124,7 @@ def demo_generation_metrics():
     print(f"\nИзвлеченные цитаты: {citations_bad}")
 
     cite_metrics_bad = evaluate_citation_quality(answer_bad, "контекст", [])
-    print(f"\nМетрики цитирования:")
+    print("\nМетрики цитирования:")
     print(f"  Есть цитаты: {cite_metrics_bad['has_citations']}")
     print(f"  Количество цитат: {cite_metrics_bad['citation_count']}")
 
@@ -148,11 +143,11 @@ def demo_generation_metrics():
     print(f"\nВсе цитаты: {citations_dup}")
 
     cite_metrics_dup = evaluate_citation_quality(answer_dup, "контекст", [])
-    print(f"\nМетрики цитирования:")
+    print("\nМетрики цитирования:")
     print(f"  Всего цитат: {cite_metrics_dup['citation_count']}")
     print(f"  Уникальных: {cite_metrics_dup['unique_citation_count']}")
     print(f"  Citation diversity: {cite_metrics_dup['citation_diversity']:.2f}")
-    print(f"\n  💡 Diversity < 1.0 означает повторяющиеся цитаты")
+    print("\n  💡 Diversity < 1.0 означает повторяющиеся цитаты")
 
 
 def demo_comparison_scenarios():

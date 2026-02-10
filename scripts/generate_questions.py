@@ -5,7 +5,6 @@
 и вариаций существующих вопросов.
 """
 
-import os
 import sys
 import csv
 from pathlib import Path
@@ -24,7 +23,9 @@ import json
 load_dotenv()
 
 
-def generate_questions_from_context(context: str, llm, num_questions: int = 3) -> List[Dict[str, str]]:
+def generate_questions_from_context(
+    context: str, llm, num_questions: int = 3
+) -> List[Dict[str, str]]:
     """
     Генерирует вопросы и ответы из предоставленного контекста.
 
@@ -113,11 +114,13 @@ JSON:"""
     )
 
     chain = prompt | llm | StrOutputParser()
-    response = chain.invoke({
-        "question": original_question,
-        "answer": original_answer,
-        "num_variations": num_variations,
-    })
+    response = chain.invoke(
+        {
+            "question": original_question,
+            "answer": original_answer,
+            "num_variations": num_variations,
+        }
+    )
 
     try:
         variations = json.loads(response)
@@ -173,7 +176,7 @@ def main():
     for i, q_data in enumerate(existing_questions[:5], 1):  # Берем первые 5 для примера
         print(f"  Обработка вопроса {i}/5...")
         variations = generate_question_variations(
-            q_data["question"].replace('[cite_start]', ''),
+            q_data["question"].replace("[cite_start]", ""),
             q_data["ground_truth"],
             llm,
             num_variations=2,
@@ -206,14 +209,16 @@ def main():
             writer.writerows(new_questions)
 
     print(f"✅ Готово! Сгенерировано {len(new_questions)} вопросов")
-    print(f"📊 Статистика:")
+    print("📊 Статистика:")
     print(f"  - Вариаций существующих: ~{min(len(existing_questions) * 2, 10)}")
     print(f"  - Из документов: ~{len(documents) * 2}")
-    print(f"\n💡 Следующие шаги:")
+    print("\n💡 Следующие шаги:")
     print(f"  1. Проверьте сгенерированные вопросы в {output_path}")
-    print(f"  2. Вручную отредактируйте/удалите некачественные вопросы")
-    print(f"  3. Объедините с основным датасетом: cat tests/dataset.csv tests/dataset_extended.csv > tests/dataset_full.csv")
-    print(f"  4. Обновите run_ab_test.py для использования нового датасета")
+    print("  2. Вручную отредактируйте/удалите некачественные вопросы")
+    print(
+        "  3. Объедините с основным датасетом: cat tests/dataset.csv tests/dataset_extended.csv > tests/dataset_full.csv"
+    )
+    print("  4. Обновите run_ab_test.py для использования нового датасета")
 
 
 if __name__ == "__main__":

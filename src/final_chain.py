@@ -21,18 +21,36 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def create_final_hybrid_chain():
-    print("Создание финальной гибридной RAG-цепочки...")
+def build_reranked_retriever(vector_store, bm25_retriever, llm, query_expansion=True):
+    """Build an ApplicabilityRetriever with FlashRank reranking.
 
-    # 1) Векторная БД
-    vector_store = load_vector_store()
-
-    # 2) Семантический ретривер
-    semantic_retriever = vector_store.as_retriever(
-        search_kwargs={"k": settings.VECTOR_SEARCH_K}
+    Args:
+        vector_store: Chroma vector store
+        bm25_retriever: BM25Retriever instance
+        llm: LLM for query expansion
+        query_expansion: Whether to use LLM query expansion (disable for agent mode)
+    """
+    ensemble = ApplicabilityRetriever(
+        vector_store=vector_store,
+        bm25_retriever=bm25_retriever,
+        llm=llm,
+        search_kwargs={"k": settings.VECTOR_SEARCH_K},
+        query_expansion=query_expansion,
+    )
+    flashrank_client = Ranker(
+        model_name=settings.RERANKING_MODEL,
+        cache_dir=getattr(settings, "FLASHRANK_CACHE_DIR", None),
+    )
+    compressor = FlashrankRerank(client=flashrank_client, top_n=12)
+    return ContextualCompressionRetriever(
+        base_compressor=compressor, base_retriever=ensemble
     )
 
-    # 3) Ключевой ретривер (BM25) из всех чанков
+
+def create_final_hybrid_chain():
+    print("Создание финальной гибридной RAG-цепочки...")
+    vector_store = load_vector_store()
+
     all_data = vector_store.get(include=["metadatas", "documents"])
     all_docs_as_objects = [
         Document(page_content=doc, metadata=meta)
@@ -41,32 +59,15 @@ def create_final_hybrid_chain():
     keyword_retriever = BM25Retriever.from_documents(all_docs_as_objects)
     keyword_retriever.k = settings.VECTOR_SEARCH_K
 
-    # 4) Applicability Retriever (Умный поиск с расширением запроса)
-    # Использует LLM для генерации синонимов (Программа А -> Общие вопросы)
-    ensemble_retriever = ApplicabilityRetriever(
-        vector_store=vector_store,
-        bm25_retriever=keyword_retriever,
-        llm=get_llm(),
-        search_kwargs={"k": settings.VECTOR_SEARCH_K},
+    llm = get_llm()
+
+    final_retriever = build_reranked_retriever(
+        vector_store, keyword_retriever, llm, query_expansion=True
     )
 
-    # 5) Реранкер FlashRank
-    # top_n=12 для широкого охвата
-    flashrank_client = Ranker(
-        model_name=settings.RERANKING_MODEL,
-        cache_dir=getattr(settings, "FLASHRANK_CACHE_DIR", None),
-    )
-    compressor = FlashrankRerank(client=flashrank_client, top_n=12)
-    final_retriever = ContextualCompressionRetriever(
-        base_compressor=compressor, base_retriever=ensemble_retriever
-    )
-
-    # 6) Генерация
-    final_llm = get_llm()
     prompt_manager = PromptManager()
 
     def render_prompt(inputs):
-        """Рендерит промпт через PromptManager и возвращает список сообщений."""
         text = prompt_manager.render("final_chain", **inputs)
         return [HumanMessage(content=text)]
 
@@ -77,20 +78,12 @@ def create_final_hybrid_chain():
         }
         | RunnablePassthrough.assign(context=lambda x: format_docs(x["context"]))
         | RunnableLambda(render_prompt)
-        | final_llm
+        | llm
         | StrOutputParser()
     )
 
-    # Retriever without query expansion for Multi-Agent (agent handles decomposition)
-    agent_retriever = ApplicabilityRetriever(
-        vector_store=vector_store,
-        bm25_retriever=keyword_retriever,
-        llm=get_llm(),
-        search_kwargs={"k": settings.VECTOR_SEARCH_K},
-        query_expansion=False,
-    )
-    agent_reranker = ContextualCompressionRetriever(
-        base_compressor=compressor, base_retriever=agent_retriever
+    agent_reranker = build_reranked_retriever(
+        vector_store, keyword_retriever, llm, query_expansion=False
     )
 
     print("Финальная гибридная цепочка успешно создана.")

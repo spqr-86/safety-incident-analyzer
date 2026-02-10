@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+from functools import lru_cache
 from typing import Any, Iterable, List
 
 from langchain_core.documents import Document
@@ -69,6 +70,15 @@ def _batches_by_tokens(
         yield batch
 
 
+def _create_chroma_instance(embeddings) -> Chroma:
+    """Create a Chroma instance with standard settings."""
+    return Chroma(
+        collection_name=settings.CHROMA_COLLECTION_NAME,
+        embedding_function=embeddings,
+        persist_directory=settings.CHROMA_DB_PATH,
+    )
+
+
 def create_vector_store(chunks: List[Document]) -> Chroma:
     logger.info("Создание новой векторной базы данных...")
     os.makedirs(settings.CHROMA_DB_PATH, exist_ok=True)
@@ -79,11 +89,7 @@ def create_vector_store(chunks: List[Document]) -> Chroma:
         "AzureOpenAIEmbeddings",
     }
 
-    vector_store = Chroma(
-        collection_name=settings.CHROMA_COLLECTION_NAME,
-        embedding_function=embeddings,
-        persist_directory=settings.CHROMA_DB_PATH,
-    )
+    vector_store = _create_chroma_instance(embeddings)
 
     total, done = len(chunks), 0
     for batch in _batches_by_tokens(
@@ -102,19 +108,14 @@ def create_vector_store(chunks: List[Document]) -> Chroma:
     return vector_store
 
 
+@lru_cache(maxsize=1)
 def load_vector_store() -> Chroma:
-    """
-    Загружает существующую коллекцию Chroma с embedding_function.
-    """
+    """Load existing Chroma collection (singleton — cached per process)."""
     if not os.path.isdir(settings.CHROMA_DB_PATH):
         raise FileNotFoundError(f"Chroma DB не найдена: {settings.CHROMA_DB_PATH}")
 
     embeddings = get_embedding_model()
-    vs = Chroma(
-        collection_name=settings.CHROMA_COLLECTION_NAME,
-        embedding_function=embeddings,
-        persist_directory=settings.CHROMA_DB_PATH,
-    )
+    vs = _create_chroma_instance(embeddings)
 
     count = vs._collection.count()
     if count == 0:
@@ -123,5 +124,4 @@ def load_vector_store() -> Chroma:
             "Запустите 'python index.py' для индексации."
         )
     logger.info(f"Chroma DB загружена: {count} документов")
-
     return vs

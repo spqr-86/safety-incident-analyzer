@@ -2,44 +2,45 @@ import os
 
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
-
-load_dotenv()
-
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
+from config.settings import settings
+
+load_dotenv()
+
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
+    from google.genai.types import AutomaticFunctionCallingConfig
 except ImportError:
     ChatGoogleGenerativeAI = None
+    AutomaticFunctionCallingConfig = None
 
-from config.settings import settings
+
+def _create_openai_llm():
+    return ChatOpenAI(
+        model=settings.MODEL_NAME,
+        temperature=settings.TEMPERATURE,
+        timeout=settings.REQUEST_TIMEOUT,
+        max_retries=3,
+    )
+
+
+_LLM_PROVIDERS = {
+    "openai": _create_openai_llm,
+}
 
 
 def get_llm():
-    """
-    Фабричная функция для создания
-    объекта LLM в зависимости от настроек в config.
-    """
+    """Create LLM instance based on LLM_PROVIDER setting."""
     provider = settings.LLM_PROVIDER.lower()
-    print(f"Инициализация LLM от провайдера: {provider}")
-
-    if provider == "openai":
-        llm = ChatOpenAI(
-            model=settings.MODEL_NAME,
-            temperature=settings.TEMPERATURE,
-            timeout=settings.REQUEST_TIMEOUT,
-            max_retries=3,
-        )
-    else:
+    factory = _LLM_PROVIDERS.get(provider)
+    if not factory:
+        available = ", ".join(sorted(_LLM_PROVIDERS.keys()))
         raise ValueError(
-            f"Неизвестный провайдер LLM: {provider}. "
-            "Доступные варианты: 'openai'"
+            f"Неизвестный провайдер LLM: {provider}. Доступные: {available}"
         )
-
-    # Добавляем автоматические повторы при сетевых ошибках (в т.ч. SSL)
-    # return llm.with_retry(stop_after_attempt=3, wait_exponential_jitter=True)
-    return llm
+    return factory()
 
 
 def get_gemini_llm(
@@ -86,7 +87,22 @@ def get_gemini_llm(
     if response_mime_type is not None:
         kwargs["response_mime_type"] = response_mime_type
 
-    return ChatGoogleGenerativeAI(**kwargs)
+    llm = ChatGoogleGenerativeAI(**kwargs)
+
+    # Disable Gemini SDK's Automatic Function Calling (AFC).
+    # AFC creates its own tool-calling loop on top of LangGraph's, causing duplicate calls.
+    if AutomaticFunctionCallingConfig is not None:
+        _original_build = llm._build_request_config
+
+        def _patched_build(*args, **kw):
+            kw["automatic_function_calling"] = AutomaticFunctionCallingConfig(
+                disable=True
+            )
+            return _original_build(*args, **kw)
+
+        llm._build_request_config = _patched_build
+
+    return llm
 
 
 def get_vision_llm():
@@ -97,38 +113,48 @@ def get_vision_llm():
     return get_gemini_llm()
 
 
+def _create_hf_embeddings():
+    model = settings.EMBEDDING_MODEL_NAME
+    client = InferenceClient(
+        model=model or "intfloat/multilingual-e5-base",
+    )
+
+    # Оборачиваем в "легкий адаптер" для LangChain
+    class HFEmbeddingsWrapper:
+        def embed_query(self, text: str):
+            return client.feature_extraction(text)
+
+        def embed_documents(self, texts: list[str]):
+            return [client.feature_extraction(t) for t in texts]
+
+    return HFEmbeddingsWrapper()
+
+
+def _create_local_embeddings():
+    model = settings.EMBEDDING_MODEL_NAME
+    return HuggingFaceEmbeddings(
+        model_name=model or "ai-forever/sbert_large_nlu_ru",
+        model_kwargs={"device": "cpu", "trust_remote_code": True},
+        encode_kwargs={"normalize_embeddings": True, "batch_size": 64},
+    )
+
+
+_EMBEDDING_PROVIDERS = {
+    "openai": lambda: OpenAIEmbeddings(
+        model=settings.EMBEDDING_MODEL_NAME or "text-embedding-3-small"
+    ),
+    "hf_api": _create_hf_embeddings,
+    "local": _create_local_embeddings,
+    "huggingface": _create_local_embeddings,
+}
+
+
 def get_embedding_model():
     provider = (settings.EMBEDDING_PROVIDER or "").lower()
-    model = settings.EMBEDDING_MODEL_NAME
-
-    # ✅ OpenAI
-    if provider == "openai":
-        return OpenAIEmbeddings(
-            model=model or "text-embedding-3-small",
+    factory = _EMBEDDING_PROVIDERS.get(provider)
+    if not factory:
+        available = ", ".join(sorted(_EMBEDDING_PROVIDERS.keys()))
+        raise ValueError(
+            f"Unknown EMBEDDING_PROVIDER={provider}. Available: {available}"
         )
-
-    # ✅ HuggingFace Inference API (через huggingface_hub)
-    if provider == "hf_api":
-        client = InferenceClient(
-            model=model or "intfloat/multilingual-e5-base",
-        )
-
-        # Оборачиваем в "легкий адаптер" для LangChain
-        class HFEmbeddingsWrapper:
-            def embed_query(self, text: str):
-                return client.feature_extraction(text)
-
-            def embed_documents(self, texts: list[str]):
-                return [client.feature_extraction(t) for t in texts]
-
-        return HFEmbeddingsWrapper()
-
-    # ✅ Локальная модель (Sentence Transformers)
-    if provider in {"local", "huggingface"}:
-        return HuggingFaceEmbeddings(
-            model_name=model or "ai-forever/sbert_large_nlu_ru",
-            model_kwargs={"device": "cpu", "trust_remote_code": True},
-            encode_kwargs={"normalize_embeddings": True, "batch_size": 64},
-        )
-
-    raise ValueError(f"Unknown EMBEDDING_PROVIDER={provider}")
+    return factory()

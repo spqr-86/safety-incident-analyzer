@@ -9,11 +9,7 @@ try:
 
     version = "2.60.0"
     if version in data.get("releases", {}):
-        dist = data[
-            "releases"
-        ][
-            version
-        ][
+        dist = data["releases"][version][
             0
         ]  # assuming first wheel/sdist has metadata? No, PyPI JSON puts requires_dist in 'info' usually for latest, but releases might not have it unless it's full metadata.
         # Wait, 'info' key has metadata for the *latest* release. Let's check 'info' version.

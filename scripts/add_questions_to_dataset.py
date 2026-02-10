@@ -30,10 +30,9 @@ def load_dataset(dataset_path: str) -> List[Dict[str, str]]:
     with open(dataset_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            questions.append({
-                "question": row["question"],
-                "ground_truth": row["ground_truth"]
-            })
+            questions.append(
+                {"question": row["question"], "ground_truth": row["ground_truth"]}
+            )
     return questions
 
 
@@ -81,7 +80,9 @@ def interactive_mode(dataset_path: str) -> None:
         if not question:
             break
 
-        print("💡 Эталонный ответ (можно вводить многострочно, двойной Enter для завершения):")
+        print(
+            "💡 Эталонный ответ (можно вводить многострочно, двойной Enter для завершения):"
+        )
         ground_truth_lines = []
         empty_count = 0
 
@@ -101,10 +102,7 @@ def interactive_mode(dataset_path: str) -> None:
             print("⚠️  Ответ пустой, вопрос пропущен")
             continue
 
-        questions.append({
-            "question": question,
-            "ground_truth": ground_truth
-        })
+        questions.append({"question": question, "ground_truth": ground_truth})
 
         print(f"✅ Добавлено (всего вопросов: {len(questions)})")
 
@@ -138,10 +136,12 @@ def batch_mode(dataset_path: str, input_file: str) -> None:
             print(f"⚠️  Пропущен элемент {i}: отсутствует question или ground_truth")
             continue
 
-        valid_questions.append({
-            "question": item["question"].strip(),
-            "ground_truth": item["ground_truth"].strip()
-        })
+        valid_questions.append(
+            {
+                "question": item["question"].strip(),
+                "ground_truth": item["ground_truth"].strip(),
+            }
+        )
 
     print(f"✅ Валидировано {len(valid_questions)} вопросов")
 
@@ -164,12 +164,12 @@ def create_template_json(output_path: str) -> None:
     template = [
         {
             "question": "Кто должен проходить обучение по охране труда?",
-            "ground_truth": "Все работники организации, включая руководителя [cite: 219]. Обучение проводится по программам, разработанным с учетом специфики деятельности [cite: 220]."
+            "ground_truth": "Все работники организации, включая руководителя [cite: 219]. Обучение проводится по программам, разработанным с учетом специфики деятельности [cite: 220].",
         },
         {
             "question": "Какова периодичность проверки знаний по охране труда?",
-            "ground_truth": "Периодическая проверка проводится не реже одного раза в год [cite: 225]. Внеплановая проверка проводится при изменении нормативных актов или условий труда [cite: 226]."
-        }
+            "ground_truth": "Периодическая проверка проводится не реже одного раза в год [cite: 225]. Внеплановая проверка проводится при изменении нормативных актов или условий труда [cite: 226].",
+        },
     ]
 
     with open(output_path, "w", encoding="utf-8") as f:
@@ -181,9 +181,7 @@ def create_template_json(output_path: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Добавление вопросов в датасет"
-    )
+    parser = argparse.ArgumentParser(description="Добавление вопросов в датасет")
     parser.add_argument(
         "--dataset",
         default="tests/dataset.csv",
@@ -227,7 +225,9 @@ def main():
     elif args.input:
         batch_mode(str(dataset_path), args.input)
     else:
-        print("❌ Укажите режим работы: --interactive, --input, --show, или --create-template")
+        print(
+            "❌ Укажите режим работы: --interactive, --input, --show, или --create-template"
+        )
         parser.print_help()
         sys.exit(1)
 

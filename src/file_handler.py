@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Tuple, Union, Any
 
 from docling.document_converter import DocumentConverter
-from docling.datamodel.base_models import InputFormat
 from docling_core.types.doc.document import (
-    DocItem,
     SectionHeaderItem,
     TextItem,
     ListItem,

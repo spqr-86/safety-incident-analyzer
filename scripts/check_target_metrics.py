@@ -11,8 +11,7 @@ import json
 import sys
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
-
+from typing import Dict, Any, Tuple
 
 # Целевые значения метрик
 TARGET_METRICS = {
@@ -120,17 +119,19 @@ def check_all_metrics(results: Dict[str, Any]) -> Dict[str, Any]:
         current_value = metrics.get(metric_key, 0.0)
         status, emoji, message = check_metric(metric_key, current_value, config)
 
-        checks.append({
-            "metric": config["description"],
-            "key": metric_key,
-            "current": current_value,
-            "target": config["target"],
-            "critical": config["critical"],
-            "unit": config["unit"],
-            "status": status,
-            "emoji": emoji,
-            "message": message,
-        })
+        checks.append(
+            {
+                "metric": config["description"],
+                "key": metric_key,
+                "current": current_value,
+                "target": config["target"],
+                "critical": config["critical"],
+                "unit": config["unit"],
+                "status": status,
+                "emoji": emoji,
+                "message": message,
+            }
+        )
 
         if status == "achieved":
             achieved_count += 1
@@ -162,7 +163,7 @@ def print_results(check_results: Dict[str, Any], verbose: bool = True) -> None:
     print(f"📊 Dataset size: {check_results['dataset_size']}")
 
     summary = check_results["summary"]
-    print(f"\n📈 Сводка:")
+    print("\n📈 Сводка:")
     print(f"   ✅ Достигнуто целевых:  {summary['achieved']}/{summary['total']}")
     print(f"   ⚠️  Приемлемо:          {summary['acceptable']}/{summary['total']}")
     print(f"   ❌ Критичных:          {summary['critical']}/{summary['total']}")

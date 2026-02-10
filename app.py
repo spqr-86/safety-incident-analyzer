@@ -1,6 +1,5 @@
 import os
 import sys
-import re
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -14,13 +13,11 @@ if os.path.exists("/home/adminuser/venv/bin/python"):
 # Локальные импорты
 from config.settings import settings
 from src.final_chain import create_final_hybrid_chain
+from src.ui_helpers import find_proof_images
 from utils.logging import logger
 
 # Multi-Agent RAG Workflow
 try:
-    from langchain_community.retrievers import BM25Retriever
-    from langchain_core.documents import Document
-    from langchain_classic.retrievers import EnsembleRetriever
     from agents.multiagent_rag import MultiAgentRAGWorkflow
 
     MAS_AVAILABLE = True
@@ -155,7 +152,9 @@ if not loaded or loaded[0] is None:
 rag_chain, hybrid_retriever, agent = loaded
 
 if mas_mode and agent is None:
-    st.sidebar.warning("Multi-Agent RAG не удалось инициализировать. Используется Classic RAG.")
+    st.sidebar.warning(
+        "Multi-Agent RAG не удалось инициализировать. Используется Classic RAG."
+    )
 
 # =========================
 #     CHAT HISTORY INIT
@@ -176,12 +175,8 @@ for m in st.session_state.messages:
         # Рендеринг картинок в истории сложнее, так как st.image создает отдельный блок
         # Проверим, есть ли картинки в контенте сообщения (если это сохраненный ответ)
         if m["role"] == "assistant":
-            img_matches = re.findall(
-                r"(static/visuals/proof_[a-f0-9]+\.png)", m["content"]
-            )
-            for img_path in img_matches:
-                if os.path.exists(img_path):
-                    st.image(img_path, caption="Визуальное доказательство", width=600)
+            for img_path in find_proof_images(m["content"]):
+                st.image(img_path, caption="Визуальное доказательство", width=600)
 
 # =========================
 #       CHAT INPUT
@@ -211,17 +206,36 @@ if user_query:
                     st.markdown(answer)
 
                     # Проверка на наличие изображений в тексте ответа и их отрисовка
-                    img_matches = re.findall(
-                        r"(static/visuals/proof_[a-f0-9]+\.png)", answer
-                    )
-                    for img_path in img_matches:
-                        if os.path.exists(img_path):
-                            st.image(
-                                img_path, caption="Визуальное доказательство", width=600
-                            )
+                    for img_path in find_proof_images(answer):
+                        st.image(
+                            img_path, caption="Визуальное доказательство", width=600
+                        )
 
                     # Сохраним последний ответ для истории
                     st.session_state.last_answer = answer
+
+                    # Источники агента
+                    chunks = result.get("chunks_found", [])
+                    if chunks:
+                        with st.expander(
+                            f"🔎 Показать источники ({len(chunks)})", expanded=False
+                        ):
+                            for i, chunk in enumerate(chunks, start=1):
+                                src = chunk.get("source", "N/A")
+                                page = chunk.get("page_no", "")
+                                preview = (
+                                    chunk.get("content", "")[:500]
+                                    .strip()
+                                    .replace("\n", " ")
+                                )
+                                st.markdown(
+                                    f"**{i}. Источник:** `{src}`"
+                                    + (f" · стр. {page}" if page else "")
+                                )
+                                st.code(preview, language="markdown")
+                                st.divider()
+                    else:
+                        st.caption("Источники не найдены.")
 
                 except Exception as e:
                     st.error(f"Ошибка агента: {e}")
@@ -241,39 +255,44 @@ if user_query:
                     )
                 st.session_state.last_answer = response_text
                 answer = response_text
+
+                # Источники Legacy RAG
+                try:
+                    retrieved_docs = hybrid_retriever.invoke(user_query)[
+                        :show_sources_n
+                    ]
+                except Exception:
+                    retrieved_docs = []
+
+                if retrieved_docs:
+                    with st.expander(
+                        f"🔎 Показать источники (топ-{len(retrieved_docs)})",
+                        expanded=False,
+                    ):
+                        for i, doc in enumerate(retrieved_docs, start=1):
+                            src = (
+                                doc.metadata.get("source")
+                                or doc.metadata.get("file_path")
+                                or "N/A"
+                            )
+                            section = (
+                                doc.metadata.get("section")
+                                or doc.metadata.get("header")
+                                or ""
+                            )
+                            preview = doc.page_content[:500].strip().replace("\n", " ")
+                            st.markdown(
+                                f"**{i}. Источник:** `{src}`"
+                                + (f" · *{section}*" if section else "")
+                            )
+                            st.code(preview, language="markdown")
+                            st.divider()
+                else:
+                    st.caption("Не удалось получить источники для отображения.")
+
             except Exception as e:
                 st.error(f"Ошибка RAG-цепочки: {e}")
                 answer = f"Извините, произошла ошибка: {e}"
-
-        # Источники (общие для обоих режимов)
-        # Агент сам ищет, но мы можем показать топ документов из RAG для справки
-        try:
-            retrieved_docs = hybrid_retriever.invoke(user_query)[:show_sources_n]
-        except Exception:
-            retrieved_docs = []
-
-        if retrieved_docs:
-            with st.expander(
-                f"🔎 Показать источники (топ-{len(retrieved_docs)})", expanded=False
-            ):
-                for i, doc in enumerate(retrieved_docs, start=1):
-                    src = (
-                        doc.metadata.get("source")
-                        or doc.metadata.get("file_path")
-                        or "N/A"
-                    )
-                    section = (
-                        doc.metadata.get("section") or doc.metadata.get("header") or ""
-                    )
-                    preview = doc.page_content[:500].strip().replace("\n", " ")
-                    st.markdown(
-                        f"**{i}. Источник:** `{src}`  "
-                        + (f" · *{section}*" if section else "")
-                    )
-                    st.code(preview, language="markdown")
-                    st.divider()
-        else:
-            st.caption("Не удалось получить источники для отображения.")
 
     # Сохраняем сообщение ассистента в историю
     st.session_state.messages.append({"role": "assistant", "content": answer})

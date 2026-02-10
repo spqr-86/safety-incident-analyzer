@@ -1,4 +1,3 @@
-from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .constants import ALLOWED_TYPES, MAX_FILE_SIZE, MAX_TOTAL_SIZE
@@ -50,6 +49,14 @@ class Settings(BaseSettings):
     # Google Gemini settings
     GEMINI_API_KEY: str = ""
     GEMINI_FAST_MODEL: str = "gemini-3-flash-preview"
+
+    # Agent workflow settings
+    THINKING_BUDGET: int = 8192
+    THINKING_VERIFIER: int = 1024
+    MAX_REVISIONS: int = 1
+    MAX_AGENT_STEPS: int = 16
+    MAX_SEARCH_CALLS: int = 2
+    MAX_VISUAL_PROOF_CALLS: int = 1
 
     # динамически подставим суффикс по провайдеру,
     # если путь не задан через .env

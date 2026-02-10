@@ -11,12 +11,11 @@ Graph Structure:
     Revision: verifier (needs_revision) → rag_agent (max 1)
 """
 
-import json
 import logging
 import re
-from enum import Enum
+from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, TypedDict
+from typing import Dict, Optional, TypedDict
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -25,17 +24,22 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import create_react_agent
 
 from config.settings import settings
-from src.agent_tools import search_documents, set_global_retriever, reset_search_counter, visual_proof
+from src.agent_tools import (
+    create_tool_context,
+    make_tools,
+)
 from src.llm_factory import get_gemini_llm, get_llm
+from src.parsers import (
+    extract_text,
+    parse_json_from_response,
+    parse_search_results,
+    parse_status_block,
+)
 from src.prompt_manager import PromptManager
+from src.types import ChunkInfo, RAGStatus, RouteType, VerifyStatus
 
 logger = logging.getLogger(__name__)
 
-# --- Constants ---
-THINKING_BUDGET = 8192  # ReAct agent: adaptive thinking (ceiling, not fixed)
-THINKING_VERIFIER = 1024  # Verifier: moderate reasoning
-MAX_REVISIONS = 1
-MAX_AGENT_STEPS = 20  # Hard limit on ReAct agent recursion (~10 tool calls)
 
 GLOSSARY_PATH = Path(__file__).parent.parent / "config" / "term_glossary.yaml"
 
@@ -64,19 +68,36 @@ OUT_OF_SCOPE_PATTERNS = re.compile(
 
 
 # --- Glossary ---
-def _load_glossary(path: Path = GLOSSARY_PATH) -> dict[str, str]:
-    """Load term glossary: {lowercase_short_term: official_term}."""
-    if not path.exists():
-        logger.warning("Term glossary not found at %s", path)
+@lru_cache(maxsize=1)
+def _load_glossary(path: str = str(GLOSSARY_PATH)) -> dict[str, str]:
+    """Load term glossary (cached — called once per process)."""
+    p = Path(path)
+    if not p.exists():
+        logger.warning("Term glossary not found at %s", p)
         return {}
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(p, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
         terms = data.get("terms", {}) if data else {}
-        return {key.lower(): val["official"] for key, val in terms.items() if "official" in val}
+        return {
+            key.lower(): val["official"]
+            for key, val in terms.items()
+            if "official" in val
+        }
     except Exception as e:
         logger.error("Failed to load glossary: %s", e)
         return {}
+
+
+@lru_cache(maxsize=1)
+def _compiled_glossary_patterns() -> list[tuple[re.Pattern, str, str]]:
+    """Pre-compile regex patterns for all glossary terms (cached)."""
+    glossary = _load_glossary()
+    patterns = []
+    for short_term, official in glossary.items():
+        pattern = _make_term_pattern(short_term)
+        patterns.append((pattern, short_term, official))
+    return patterns
 
 
 def _make_term_pattern(term: str) -> re.Pattern:
@@ -97,18 +118,13 @@ def _make_term_pattern(term: str) -> re.Pattern:
     return re.compile(r"\s+".join(parts), re.IGNORECASE)
 
 
-def _expand_query(query: str, glossary: dict[str, str]) -> str:
-    """Expand unofficial abbreviations in query using glossary.
-
-    Appends glossary block for each match found.
-    Handles Russian declensions via stem-based matching.
-    Example: "программы А" → "программы А\\n\\n[Глоссарий: программа а → ...]"
-    """
-    if not glossary:
+def _expand_query(query: str) -> str:
+    """Expand unofficial abbreviations using cached glossary patterns."""
+    patterns = _compiled_glossary_patterns()
+    if not patterns:
         return query
     expansions = []
-    for short_term, official in glossary.items():
-        pattern = _make_term_pattern(short_term)
+    for pattern, short_term, official in patterns:
         if pattern.search(query):
             expansions.append(f"{short_term} → {official}")
     if expansions:
@@ -130,35 +146,7 @@ def _classify_query(query: str) -> str:
     return "rag"
 
 
-# --- Enums ---
-class RouteType(str, Enum):
-    CHITCHAT = "chitchat"
-    OUT_OF_SCOPE = "out_of_scope"
-    RAG = "rag"
-
-
-class RAGStatus(str, Enum):
-    FOUND = "FOUND"
-    NOT_FOUND = "NOT_FOUND"
-    PARTIAL = "PARTIAL"
-
-
-class VerifyStatus(str, Enum):
-    APPROVED = "approved"
-    NEEDS_REVISION = "needs_revision"
-
-
 # --- State ---
-class ChunkInfo(TypedDict):
-    """Structured chunk information."""
-
-    content: str
-    source: str
-    page_no: Optional[int]
-    bbox: Optional[List[float]]
-    visual_text: Optional[str]
-
-
 class RAGState(TypedDict):
     """State for the Multi-Agent RAG workflow."""
 
@@ -177,128 +165,6 @@ class RAGState(TypedDict):
     final_answer: str
 
 
-# --- Parsers ---
-def _parse_json_from_response(raw: str) -> dict:
-    """Extract JSON from LLM response with multiple fallback strategies."""
-    # 1. Try markdown code blocks
-    code_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-    if code_match:
-        raw_json = code_match.group(1)
-    else:
-        # 2. Fallback: find first {...}
-        brace_match = re.search(r"(\{.*\})", raw, re.DOTALL)
-        raw_json = brace_match.group(1) if brace_match else "{}"
-
-    try:
-        return json.loads(raw_json)
-    except json.JSONDecodeError:
-        return {}
-
-
-def _parse_search_results(search_output: str) -> List[ChunkInfo]:
-    """Parse search_documents output into structured ChunkInfo list."""
-    chunks = []
-
-    result_pattern = re.compile(
-        r"\[Result \d+\] File: ([^\|]+)\| Page: ([^\|]+)\| BBox: ([^\n]+)\n"
-        r"(?:Extended Context:\n)?(.*?)(?:\(IDs: [^\)]+\))?(?=\[Result|\Z)",
-        re.DOTALL,
-    )
-
-    for match in result_pattern.finditer(search_output):
-        source = match.group(1).strip()
-        page_str = match.group(2).strip()
-        bbox_str = match.group(3).strip()
-        content = match.group(4).strip() if match.group(4) else ""
-
-        try:
-            page_no = int(page_str) if page_str != "N/A" else None
-        except ValueError:
-            page_no = None
-
-        bbox = None
-        if bbox_str and bbox_str not in ("N/A", "None"):
-            try:
-                bbox = json.loads(bbox_str.replace("'", '"'))
-            except json.JSONDecodeError:
-                pass
-
-        chunks.append(
-            ChunkInfo(
-                content=content,
-                source=source,
-                page_no=page_no,
-                bbox=bbox,
-                visual_text=None,
-            )
-        )
-
-    # Fallback: if no structured results, treat whole output as single chunk
-    if (
-        not chunks
-        and search_output
-        and "No relevant documents found" not in search_output
-    ):
-        chunks.append(
-            ChunkInfo(
-                content=search_output,
-                source="unknown",
-                page_no=None,
-                bbox=None,
-                visual_text=None,
-            )
-        )
-
-    return chunks
-
-
-def _extract_text(content) -> str:
-    """Extract plain text from AIMessage content (str or Gemini-style list of blocks)."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            if isinstance(block, dict) and "text" in block:
-                parts.append(block["text"])
-            elif isinstance(block, str):
-                parts.append(block)
-        return "\n".join(parts)
-    return str(content)
-
-
-def _parse_status_block(text: str) -> tuple[RAGStatus, str, list[str]]:
-    """Parse ===STATUS===, ===ANSWER===, and ===UNANSWERED=== blocks from agent output.
-
-    Returns:
-        (rag_status, answer_text, unanswered_list)
-    """
-    # Parse status
-    status = RAGStatus.FOUND  # default
-    status_match = re.search(r"===STATUS===\s*\n\s*(\w+)", text)
-    if status_match:
-        raw_status = status_match.group(1).strip().upper()
-        if raw_status in (s.value for s in RAGStatus):
-            status = RAGStatus(raw_status)
-
-    # Parse answer
-    answer = text  # fallback: whole text
-    answer_match = re.search(r"===ANSWER===\s*\n(.*?)(?:===UNANSWERED===|\Z)", text, re.DOTALL)
-    if answer_match:
-        answer = answer_match.group(1).strip()
-
-    # Parse unanswered
-    unanswered = []
-    unanswered_match = re.search(r"===UNANSWERED===\s*\n(.*?)$", text, re.DOTALL)
-    if unanswered_match:
-        for line in unanswered_match.group(1).strip().splitlines():
-            line = line.strip().lstrip("- ")
-            if line:
-                unanswered.append(line)
-
-    return status, answer, unanswered
-
-
 class MultiAgentRAGWorkflow:
     """
     RAG workflow with a single ReAct agent and thinking levels.
@@ -314,20 +180,28 @@ class MultiAgentRAGWorkflow:
     - OpenAI: Uses configured model for all steps (no thinking budgets)
     """
 
-    def __init__(self, retriever: BaseRetriever, llm_provider: str = "gemini"):
+    def __init__(
+        self, retriever: BaseRetriever, llm_provider: str = "gemini", tools=None
+    ):
         self.retriever = retriever
         self.llm_provider = llm_provider.lower()
-        set_global_retriever(retriever)
+
+        # Tool context
+        self.tool_ctx = create_tool_context(retriever)
+        self.tools = tools or make_tools(self.tool_ctx)
+
+        # Keep global setter for backward compatibility if needed, but we should move away from it.
+        # set_global_retriever(retriever)
 
         # LLMs based on provider
         if self.llm_provider == "gemini":
             self.rag_llm = get_gemini_llm(
                 settings.GEMINI_FAST_MODEL,
-                thinking_budget=THINKING_BUDGET,
+                thinking_budget=settings.THINKING_BUDGET,
             )
             self.verifier_llm = get_gemini_llm(
                 settings.GEMINI_FAST_MODEL,
-                thinking_budget=THINKING_VERIFIER,
+                thinking_budget=settings.THINKING_VERIFIER,
                 response_mime_type="application/json",
             )
         else:  # openai fallback
@@ -336,7 +210,6 @@ class MultiAgentRAGWorkflow:
             self.verifier_llm = openai_llm
 
         self.prompt_manager = PromptManager()
-        self.glossary = _load_glossary()
         self.compiled_workflow = self._build_workflow()
 
     def _build_workflow(self) -> StateGraph:
@@ -386,7 +259,7 @@ class MultiAgentRAGWorkflow:
             Dict with route_type, final_answer, and other state fields
         """
         # Expand query with glossary before entering the graph
-        expanded_query = _expand_query(query, self.glossary)
+        expanded_query = _expand_query(query)
         if expanded_query != query:
             logger.info("Query expanded: %r → %r", query, expanded_query)
 
@@ -405,6 +278,10 @@ class MultiAgentRAGWorkflow:
             "revision_count": 0,
             "final_answer": "",
         }
+
+        # Reset tool counters in context
+        self.tool_ctx.search_call_count = 0
+        self.tool_ctx.visual_proof_call_count = 0
 
         final_state = self.compiled_workflow.invoke(
             initial_state, {"recursion_limit": 50}
@@ -430,7 +307,6 @@ class MultiAgentRAGWorkflow:
 
     def _rag_agent_node(self, state: RAGState) -> dict:
         """RAG Agent: ReAct agent with adaptive decomposition."""
-        reset_search_counter()
         system_prompt = self.prompt_manager.render(
             "multiagent_rag_agent",
             searches_performed=state.get("searches_performed", []),
@@ -451,7 +327,7 @@ class MultiAgentRAGWorkflow:
                 f"Исправь указанные проблемы. Можешь выполнить дополнительный поиск если нужно."
             )
 
-        tools = [search_documents, visual_proof]
+        tools = self.tools
 
         agent = create_react_agent(
             model=self.rag_llm,
@@ -461,7 +337,7 @@ class MultiAgentRAGWorkflow:
         )
         result = agent.invoke(
             {"messages": [("user", user_msg)]},
-            {"recursion_limit": MAX_AGENT_STEPS},
+            {"recursion_limit": settings.MAX_AGENT_STEPS},
         )
         messages = result["messages"]
 
@@ -476,7 +352,7 @@ class MultiAgentRAGWorkflow:
             chunks=state.get("chunks_found", []),
         )
         response = self.verifier_llm.invoke([HumanMessage(content=prompt)])
-        parsed = _parse_json_from_response(_extract_text(response.content).strip())
+        parsed = parse_json_from_response(extract_text(response.content).strip())
 
         status = parsed.get("status", "approved")
         revision_count = state.get("revision_count", 0)
@@ -507,14 +383,19 @@ class MultiAgentRAGWorkflow:
 
     def _route_after_filter(self, state: RAGState) -> str:
         route_type = state.get("route_type", "")
-        if route_type in (RouteType.CHITCHAT, RouteType.OUT_OF_SCOPE, "chitchat", "out_of_scope"):
+        if route_type in (
+            RouteType.CHITCHAT,
+            RouteType.OUT_OF_SCOPE,
+            "chitchat",
+            "out_of_scope",
+        ):
             return "direct_response"
         return "rag_agent"
 
     def _route_after_verify(self, state: RAGState) -> str:
         if state.get("verify_status") in (VerifyStatus.APPROVED, "approved"):
             return "format_final"
-        if state.get("revision_count", 0) > MAX_REVISIONS:
+        if state.get("revision_count", 0) > settings.MAX_REVISIONS:
             return "format_final"  # max revisions reached
         return "rag_agent"
 
@@ -535,19 +416,21 @@ class MultiAgentRAGWorkflow:
                 for tc in msg.tool_calls:
                     if tc["name"] == "search_documents":
                         query_arg = tc["args"].get("query", "")
-                        searches_performed.append({"query": query_arg, "results_count": 0})
+                        searches_performed.append(
+                            {"query": query_arg, "results_count": 0}
+                        )
 
             # Extract chunks from search results
             if isinstance(msg, ToolMessage):
                 if msg.name == "search_documents":
-                    parsed_chunks = _parse_search_results(_extract_text(msg.content))
+                    parsed_chunks = parse_search_results(extract_text(msg.content))
                     # Update results_count for the last search
                     if searches_performed:
                         searches_performed[-1]["results_count"] = len(parsed_chunks)
                     chunks_found.extend(parsed_chunks)
 
                 elif msg.name == "visual_proof":
-                    content = _extract_text(msg.content)
+                    content = extract_text(msg.content)
                     if content.startswith("static/") or content.startswith("proof_"):
                         image_paths.append(content)
                     # If analyze mode, update the last chunk's visual_text
@@ -565,15 +448,15 @@ class MultiAgentRAGWorkflow:
         # Find last AI message (the final response)
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and not msg.tool_calls:
-                text = _extract_text(msg.content)
-                rag_status, draft_answer, unanswered = _parse_status_block(text)
+                text = extract_text(msg.content)
+                rag_status, draft_answer, unanswered = parse_status_block(text)
                 break
 
         # Fallback: if no status block found, use raw text
         if not draft_answer:
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage):
-                    draft_answer = _extract_text(msg.content)
+                    draft_answer = extract_text(msg.content)
                     break
 
         return {
