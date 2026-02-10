@@ -19,6 +19,7 @@ class ApplicabilityRetriever(BaseRetriever):
     llm: Any  # Changed to Any to avoid Pydantic validation issues with RunnableRetry
     search_kwargs: Dict[str, Any] = {"k": 10}
     weights: List[float] = [0.6, 0.4]  # Semantic, Keyword
+    query_expansion: bool = True  # Disable for Multi-Agent (agent handles decomposition)
 
     def _generate_queries(self, original_query: str) -> List[str]:
         """Генерирует вариации поискового запроса с помощью LLM."""
@@ -47,8 +48,8 @@ class ApplicabilityRetriever(BaseRetriever):
         *,
         run_manager: Optional[CallbackManagerForRetrieverRun] = None,
     ) -> List[Document]:
-        # 1. Генерация вариаций (Multi-Query)
-        queries = self._generate_queries(query)
+        # 1. Генерация вариаций (Multi-Query) — skip if disabled
+        queries = self._generate_queries(query) if self.query_expansion else [query]
         # print(f"DEBUG: Generated queries: {queries}")  # Можно раскомментировать для отладки
 
         all_docs = []

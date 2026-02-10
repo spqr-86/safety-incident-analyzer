@@ -131,7 +131,7 @@ def load_resources():
         return None, None, None
 
     try:
-        chain, retriever = create_final_hybrid_chain()
+        chain, retriever, agent_retriever = create_final_hybrid_chain()
     except Exception as e:
         st.error(f"Произошла ошибка при подготовке RAG-цепочки: {e}")
         return None, None, None
@@ -140,7 +140,7 @@ def load_resources():
     agent = None
     if MAS_AVAILABLE:
         try:
-            agent = MultiAgentRAGWorkflow(retriever, llm_provider="openai")
+            agent = MultiAgentRAGWorkflow(agent_retriever, llm_provider="gemini")
         except Exception as e:
             logger.warning(f"Failed to init MultiAgentRAGWorkflow: {e}")
 
@@ -153,6 +153,9 @@ if not loaded or loaded[0] is None:
     st.stop()
 
 rag_chain, hybrid_retriever, agent = loaded
+
+if mas_mode and agent is None:
+    st.sidebar.warning("Multi-Agent RAG не удалось инициализировать. Используется Classic RAG.")
 
 # =========================
 #     CHAT HISTORY INIT

@@ -227,11 +227,11 @@ def main():
     # Инициализация
     print("\n🔧 Инициализация компонентов...")
     llm = get_llm()
-    rag_chain, retriever = create_final_hybrid_chain()
+    rag_chain, retriever, agent_retriever = create_final_hybrid_chain()
 
     if args.mode == "mas":
         print("🤖 Загрузка Multi-Agent RAG Workflow...")
-        chain = MultiAgentRAGWorkflow(retriever)
+        chain = MultiAgentRAGWorkflow(agent_retriever)
     else:
         chain = rag_chain
 

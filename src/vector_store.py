@@ -115,4 +115,13 @@ def load_vector_store() -> Chroma:
         embedding_function=embeddings,
         persist_directory=settings.CHROMA_DB_PATH,
     )
+
+    count = vs._collection.count()
+    if count == 0:
+        raise ValueError(
+            f"Chroma DB пуста (0 документов): {settings.CHROMA_DB_PATH}. "
+            "Запустите 'python index.py' для индексации."
+        )
+    logger.info(f"Chroma DB загружена: {count} документов")
+
     return vs

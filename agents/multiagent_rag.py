@@ -25,7 +25,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import create_react_agent
 
 from config.settings import settings
-from src.agent_tools import search_documents, set_global_retriever, visual_proof
+from src.agent_tools import search_documents, set_global_retriever, reset_search_counter, visual_proof
 from src.llm_factory import get_gemini_llm, get_llm
 from src.prompt_manager import PromptManager
 
@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 THINKING_BUDGET = 8192  # ReAct agent: adaptive thinking (ceiling, not fixed)
 THINKING_VERIFIER = 1024  # Verifier: moderate reasoning
 MAX_REVISIONS = 1
+MAX_AGENT_STEPS = 20  # Hard limit on ReAct agent recursion (~10 tool calls)
 
 GLOSSARY_PATH = Path(__file__).parent.parent / "config" / "term_glossary.yaml"
 
@@ -251,6 +252,21 @@ def _parse_search_results(search_output: str) -> List[ChunkInfo]:
     return chunks
 
 
+def _extract_text(content) -> str:
+    """Extract plain text from AIMessage content (str or Gemini-style list of blocks)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and "text" in block:
+                parts.append(block["text"])
+            elif isinstance(block, str):
+                parts.append(block)
+        return "\n".join(parts)
+    return str(content)
+
+
 def _parse_status_block(text: str) -> tuple[RAGStatus, str, list[str]]:
     """Parse ===STATUS===, ===ANSWER===, and ===UNANSWERED=== blocks from agent output.
 
@@ -391,7 +407,7 @@ class MultiAgentRAGWorkflow:
         }
 
         final_state = self.compiled_workflow.invoke(
-            initial_state, {"recursion_limit": 25}
+            initial_state, {"recursion_limit": 50}
         )
 
         return final_state
@@ -414,6 +430,7 @@ class MultiAgentRAGWorkflow:
 
     def _rag_agent_node(self, state: RAGState) -> dict:
         """RAG Agent: ReAct agent with adaptive decomposition."""
+        reset_search_counter()
         system_prompt = self.prompt_manager.render(
             "multiagent_rag_agent",
             searches_performed=state.get("searches_performed", []),
@@ -440,8 +457,12 @@ class MultiAgentRAGWorkflow:
             model=self.rag_llm,
             tools=tools,
             prompt=system_prompt,
+            version="v1",
         )
-        result = agent.invoke({"messages": [("user", user_msg)]})
+        result = agent.invoke(
+            {"messages": [("user", user_msg)]},
+            {"recursion_limit": MAX_AGENT_STEPS},
+        )
         messages = result["messages"]
 
         return self._extract_state_from_messages(messages)
@@ -455,17 +476,27 @@ class MultiAgentRAGWorkflow:
             chunks=state.get("chunks_found", []),
         )
         response = self.verifier_llm.invoke([HumanMessage(content=prompt)])
-        parsed = _parse_json_from_response(str(response.content).strip())
+        parsed = _parse_json_from_response(_extract_text(response.content).strip())
+
+        status = parsed.get("status", "approved")
+        revision_count = state.get("revision_count", 0)
+        if status == "needs_revision":
+            revision_count += 1
 
         return {
-            "verify_status": parsed.get("status", "approved"),
+            "verify_status": status,
             "verify_issues": parsed.get("issues", []),
-            "revision_count": state.get("revision_count", 0) + 1,
+            "revision_count": revision_count,
         }
 
     def _format_final_node(self, state: RAGState) -> dict:
         """Format the final answer."""
         answer = state.get("draft_answer", "")
+
+        # Strip leaked status markers from Gemini responses
+        status_idx = answer.find("===STATUS===")
+        if status_idx != -1:
+            answer = answer[:status_idx].rstrip()
 
         if state.get("verify_status") == VerifyStatus.NEEDS_REVISION:
             answer += "\n\n⚠️ Ответ предоставлен с оговорками, рекомендуется дополнительная проверка."
@@ -509,14 +540,14 @@ class MultiAgentRAGWorkflow:
             # Extract chunks from search results
             if isinstance(msg, ToolMessage):
                 if msg.name == "search_documents":
-                    parsed_chunks = _parse_search_results(str(msg.content))
+                    parsed_chunks = _parse_search_results(_extract_text(msg.content))
                     # Update results_count for the last search
                     if searches_performed:
                         searches_performed[-1]["results_count"] = len(parsed_chunks)
                     chunks_found.extend(parsed_chunks)
 
                 elif msg.name == "visual_proof":
-                    content = str(msg.content)
+                    content = _extract_text(msg.content)
                     if content.startswith("static/") or content.startswith("proof_"):
                         image_paths.append(content)
                     # If analyze mode, update the last chunk's visual_text
@@ -534,7 +565,7 @@ class MultiAgentRAGWorkflow:
         # Find last AI message (the final response)
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and not msg.tool_calls:
-                text = str(msg.content)
+                text = _extract_text(msg.content)
                 rag_status, draft_answer, unanswered = _parse_status_block(text)
                 break
 
@@ -542,7 +573,7 @@ class MultiAgentRAGWorkflow:
         if not draft_answer:
             for msg in reversed(messages):
                 if isinstance(msg, AIMessage):
-                    draft_answer = str(msg.content)
+                    draft_answer = _extract_text(msg.content)
                     break
 
         return {

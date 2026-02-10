@@ -81,5 +81,17 @@ def create_final_hybrid_chain():
         | StrOutputParser()
     )
 
+    # Retriever without query expansion for Multi-Agent (agent handles decomposition)
+    agent_retriever = ApplicabilityRetriever(
+        vector_store=vector_store,
+        bm25_retriever=keyword_retriever,
+        llm=get_llm(),
+        search_kwargs={"k": settings.VECTOR_SEARCH_K},
+        query_expansion=False,
+    )
+    agent_reranker = ContextualCompressionRetriever(
+        base_compressor=compressor, base_retriever=agent_retriever
+    )
+
     print("Финальная гибридная цепочка успешно создана.")
-    return final_chain, final_retriever
+    return final_chain, final_retriever, agent_reranker

@@ -17,11 +17,19 @@ from src.vector_store import load_vector_store
 
 # Global retriever reference (will be set during init)
 _retriever: Optional[BaseRetriever] = None
+_search_call_count: int = 0
+MAX_SEARCH_CALLS: int = 2
 
 
 def set_global_retriever(retriever: BaseRetriever):
-    global _retriever
+    global _retriever, _search_call_count
     _retriever = retriever
+    _search_call_count = 0
+
+
+def reset_search_counter():
+    global _search_call_count
+    _search_call_count = 0
 
 
 def _fetch_neighboring_chunks(
@@ -127,9 +135,16 @@ def search_documents(query: str) -> str:
 
     Use this tool to find the information, then use the visual_proof tool with the extracted details.
     """
-    global _retriever
+    global _retriever, _search_call_count
     if not _retriever:
         return "Error: Retriever not initialized."
+
+    _search_call_count += 1
+    if _search_call_count > MAX_SEARCH_CALLS:
+        return (
+            f"Лимит поисков достигнут ({MAX_SEARCH_CALLS} из {MAX_SEARCH_CALLS}). "
+            "Сформулируй ответ на основе уже найденных данных."
+        )
 
     # 1. Initial Retrieval
     initial_docs = _retriever.invoke(query)
