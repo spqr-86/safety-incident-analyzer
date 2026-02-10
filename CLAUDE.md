@@ -8,6 +8,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Stack**: Python 3.11+, LangChain, LangGraph, ChromaDB, Docling, FlashRank, Streamlit, Google Gemini 3
 
+## Virtual Environment
+
+**IMPORTANT**: Always use the project's virtual environment for all operations (running scripts, installing packages, executing tests, etc.). Never install packages into the global Python.
+
+```bash
+# Activate before any command
+source venv/bin/activate
+
+# Or use the venv python/pip directly
+./venv/bin/python ...
+./venv/bin/pip install ...
+```
+
 ## Development Commands
 
 ```bash
