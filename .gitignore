@@ -207,3 +207,4 @@ app.log
 *.pkl
 benchmarks/
 static/visuals/
+.flashrank_cache/
