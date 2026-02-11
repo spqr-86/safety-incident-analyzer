@@ -95,7 +95,7 @@ class TestGlossary(unittest.TestCase):
     """Test glossary loading and query expansion."""
 
     def test_load_glossary_from_file(self):
-        glossary = _load_glossary()
+        _load_glossary()
         # This test depends on the real glossary file or lack thereof.
         # It's fine to keep it as basic verification.
 

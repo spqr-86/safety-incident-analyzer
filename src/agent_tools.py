@@ -292,17 +292,6 @@ def _visual_proof_impl(file_name, page_no, bbox, mode):
         return f"Error processing visual proof: {str(e)}"
 
 
-def set_global_retriever(retriever: BaseRetriever):
-    global _retriever, _search_call_count
-    _retriever = retriever
-    _search_call_count = 0
-
-
-def reset_tool_counters():
-    global _search_call_count, _visual_proof_call_count
-    _search_call_count = 0
-    _visual_proof_call_count = 0
-
 
 def _merge_chunks(docs: List[Document]) -> Dict:
     """
