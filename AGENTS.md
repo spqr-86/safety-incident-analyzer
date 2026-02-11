@@ -120,7 +120,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 ### Core Components
 - **Frameworks:** LangChain, LangGraph, Streamlit.
 - **RAG Approaches:**
-  1.  **Multi-Agent RAG (`agents/multiagent_rag.py`):** Primary. Uses ReAct agent, Verifier, and Regex Filter.
+  1.  **Multi-Agent RAG (`agents/multiagent_rag.py`):** Primary. Uses `Router Agent` (LLM), ReAct agent with Parallel Search, and Smart Verifier.
   2.  **Simple RAG (`src/final_chain.py`):** Legacy fallback.
 - **Vector Store:** ChromaDB with token-aware batching (`src/vector_store.py`).
 - **LLM Factory:** `src/llm_factory.py` unifies provider access (OpenAI, Gemini).
@@ -131,8 +131,9 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 - **Versioning:** Controlled via `registry.yaml` or environment variables.
 
 ### Key Workflows
-- **Term Glossary:** `config/term_glossary.yaml` handles domain abbreviations (e.g., "программа А"). It is applied *before* the regex filter.
+- **Term Glossary:** `config/term_glossary.yaml` handles domain abbreviations (e.g., "программа А"). It is applied *before* the router.
 - **Visual Proof:** The system extracts images from PDFs (`static/visuals/`) to prove answers.
+- **Search Optimization:** Agent search bypasses FlashRank reranking for speed (k=10). BM25 index is cached.
 
 ## 4. Cursor / Copilot Rules
 *No specific .cursorrules or .github/copilot-instructions.md found. Adhere to the guidelines above.*

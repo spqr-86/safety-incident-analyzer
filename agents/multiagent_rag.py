@@ -2,10 +2,10 @@
 Multi-Agent RAG Workflow with ReAct Agent and Thinking Levels
 
 Architecture:
-    User Query → Glossary Expansion → Regex Filter → RAG Agent (ReAct) → Verifier → Answer
+    User Query → Glossary Expansion → Router (LLM) → RAG Agent (ReAct) → Verifier → Answer
 
 Graph Structure:
-    filter → rag_agent → verifier → format_final
+    router → rag_agent → verifier → format_final
            → direct_response (chitchat/out_of_scope)
 
     Revision: verifier (needs_revision) → rag_agent (max 1)
@@ -24,6 +24,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import create_react_agent
 
 from config.settings import settings
+from agents.router_agent import RouterAgent
 from src.agent_tools import (
     create_tool_context,
     make_tools,
@@ -42,29 +43,6 @@ logger = logging.getLogger(__name__)
 
 
 GLOSSARY_PATH = Path(__file__).parent.parent / "config" / "term_glossary.yaml"
-
-# Regex patterns for chitchat / out_of_scope detection (no LLM needed)
-CHITCHAT_PATTERNS = re.compile(
-    r"^\s*("
-    r"привет\w*|здравствуй\w*|добрый\s+(день|вечер|утро)|"
-    r"спасибо|благодар|пока\b|до свидания|"
-    r"как дела|что (ты )?(умеешь|можешь|знаешь)|"
-    r"кто ты|расскажи о себе|помоги\s*$|помощь\s*$|"
-    r"hi\b|hello|thanks|bye"
-    r")\s*[?!.]*\s*$",
-    re.IGNORECASE,
-)
-
-OUT_OF_SCOPE_PATTERNS = re.compile(
-    r"^\s*("
-    r"какая погода|расскажи (анекдот|шутку|историю)|"
-    r"(сколько|какой)\s+(стоит|цена)|"
-    r"напиши (стих|код|программу|песню)|"
-    r"переведи\s|"
-    r"что такое (любовь|счастье|смысл жизни)"
-    r")",
-    re.IGNORECASE,
-)
 
 
 # --- Glossary ---
@@ -132,20 +110,6 @@ def _expand_query(query: str) -> str:
     return query
 
 
-def _classify_query(query: str) -> str:
-    """Classify query as chitchat, out_of_scope, or rag using regex patterns.
-
-    Returns: 'chitchat', 'out_of_scope', or 'rag'
-    """
-    # Strip glossary block for classification
-    clean_query = re.sub(r"\n\n\[Глоссарий:.*\]$", "", query, flags=re.DOTALL).strip()
-    if CHITCHAT_PATTERNS.match(clean_query):
-        return "chitchat"
-    if OUT_OF_SCOPE_PATTERNS.match(clean_query):
-        return "out_of_scope"
-    return "rag"
-
-
 # --- State ---
 class RAGState(TypedDict):
     """State for the Multi-Agent RAG workflow."""
@@ -172,7 +136,7 @@ class MultiAgentRAGWorkflow:
     The agent autonomously decides when to search, decompose,
     and use visual_proof based on the merged prompt.
 
-    Graph: filter → rag_agent → verifier → format_final
+    Graph: router → rag_agent → verifier → format_final
                   → direct_response (chitchat/out_of_scope)
 
     Supports:
@@ -189,9 +153,6 @@ class MultiAgentRAGWorkflow:
         # Tool context
         self.tool_ctx = create_tool_context(retriever)
         self.tools = tools or make_tools(self.tool_ctx)
-
-        # Keep global setter for backward compatibility if needed, but we should move away from it.
-        # set_global_retriever(retriever)
 
         # LLMs based on provider
         if self.llm_provider == "gemini":
@@ -210,23 +171,25 @@ class MultiAgentRAGWorkflow:
             self.verifier_llm = openai_llm
 
         self.prompt_manager = PromptManager()
+        self.router_agent = RouterAgent(llm_provider=self.llm_provider)
         self.compiled_workflow = self._build_workflow()
 
-    def _build_workflow(self) -> StateGraph:
+    def _build_workflow(self):
         """Build the LangGraph workflow."""
+
         graph = StateGraph(RAGState)
 
-        graph.add_node("filter", self._filter_node)
+        graph.add_node("router", self._router_node)
         graph.add_node("direct_response", self._direct_response_node)
         graph.add_node("rag_agent", self._rag_agent_node)
         graph.add_node("verifier", self._verifier_node)
         graph.add_node("format_final", self._format_final_node)
 
-        graph.set_entry_point("filter")
+        graph.set_entry_point("router")
 
         graph.add_conditional_edges(
-            "filter",
-            self._route_after_filter,
+            "router",
+            self._route_after_router,
             {
                 "direct_response": "direct_response",
                 "rag_agent": "rag_agent",
@@ -234,7 +197,15 @@ class MultiAgentRAGWorkflow:
         )
         graph.add_edge("direct_response", END)
 
-        graph.add_edge("rag_agent", "verifier")
+        # Conditional edge based on similarity score and content
+        graph.add_conditional_edges(
+            "rag_agent",
+            self._route_after_rag_agent,
+            {
+                "verifier": "verifier",
+                "format_final": "format_final",
+            },
+        )
 
         graph.add_conditional_edges(
             "verifier",
@@ -248,21 +219,11 @@ class MultiAgentRAGWorkflow:
 
         return graph.compile()
 
-    def invoke(self, query: str) -> Dict:
+    def stream_events(self, query: str):
         """
-        Process a user query through the RAG workflow.
-
-        Args:
-            query: User's question
-
-        Returns:
-            Dict with route_type, final_answer, and other state fields
+        Process a user query and yield status updates + final answer.
         """
-        # Expand query with glossary before entering the graph
         expanded_query = _expand_query(query)
-        if expanded_query != query:
-            logger.info("Query expanded: %r → %r", query, expanded_query)
-
         initial_state: RAGState = {
             "query": expanded_query,
             "route_type": RouteType.RAG,
@@ -279,25 +240,56 @@ class MultiAgentRAGWorkflow:
             "final_answer": "",
         }
 
-        # Reset tool counters in context
         self.tool_ctx.search_call_count = 0
         self.tool_ctx.visual_proof_call_count = 0
 
-        final_state = self.compiled_workflow.invoke(
+        # Stream the graph execution
+        for event in self.compiled_workflow.stream(
             initial_state, {"recursion_limit": 50}
-        )
-
-        return final_state
+        ):
+            # Yield node transitions
+            if "router" in event:
+                # Determine status message based on route
+                state = event["router"]
+                rtype = state.get("route_type")
+                if rtype == RouteType.RAG_COMPLEX:
+                    yield {
+                        "type": "status",
+                        "text": "🧠 Вопрос сложный, анализирую детали...",
+                    }
+                elif rtype == RouteType.RAG_SIMPLE:
+                    yield {"type": "status", "text": "🔎 Ищу ответ в документах..."}
+            elif "rag_agent" in event:
+                # Don't overwrite status if we already set it in router,
+                # but maybe update if it's taking long?
+                pass
+            elif "verifier" in event:
+                yield {"type": "status", "text": "⚖️ Проверяю корректность ответа..."}
+            elif "format_final" in event:
+                state = event["format_final"]
+                final = state.get("final_answer", "")
+                yield {"type": "final", "text": final, "state": state}
+            elif "direct_response" in event:
+                state = event["direct_response"]
+                final = state.get("final_answer", "")
+                yield {"type": "final", "text": final, "state": state}
 
     # --- Node implementations ---
 
-    def _filter_node(self, state: RAGState) -> dict:
-        """Regex-based filter: classify as chitchat/out_of_scope/rag."""
-        classification = _classify_query(state["query"])
-        return {"route_type": classification}
+    def _router_node(self, state: RAGState) -> dict:
+        """LLM-based router: classify query."""
+        result = self.router_agent.route(state["query"])
+
+        updates = {"route_type": result["type"]}
+        if result["response"]:
+            updates["direct_response"] = result["response"]
+        return updates
 
     def _direct_response_node(self, state: RAGState) -> dict:
         """Return direct response for chitchat/out_of_scope."""
+        if state.get("direct_response"):
+            return {"final_answer": state["direct_response"]}
+
         route_type = state.get("route_type", "")
         if route_type in (RouteType.CHITCHAT, "chitchat"):
             response = "Здравствуйте! Я готов помочь с вопросами по охране труда и промышленной безопасности."
@@ -381,16 +373,46 @@ class MultiAgentRAGWorkflow:
 
     # --- Routing functions ---
 
-    def _route_after_filter(self, state: RAGState) -> str:
+    def _route_after_router(self, state: RAGState) -> str:
         route_type = state.get("route_type", "")
         if route_type in (
             RouteType.CHITCHAT,
             RouteType.OUT_OF_SCOPE,
-            "chitchat",
-            "out_of_scope",
         ):
             return "direct_response"
         return "rag_agent"
+
+    def _route_after_rag_agent(self, state: RAGState) -> str:
+        """Decide whether to verify or trust the answer."""
+        chunks = state.get("chunks_found", [])
+
+        # 1. If not found or partial, verify/revise
+        if state.get("rag_status") != RAGStatus.FOUND:
+            return "verifier"
+
+        if not chunks:
+            return "verifier"
+
+        # 2. Check visual proof
+        if any(c.get("visual_text") for c in chunks):
+            # If we used VLM, better verify it
+            return "verifier"
+
+        # 3. Check source consistency
+        sources = {c.get("source") for c in chunks if c.get("source")}
+        if len(sources) > 1:
+            return "verifier"  # Cross-document synthesis needs check
+
+        # 4. Check similarity score
+        # Since we sort by relevance, the first chunk is the most important
+        top_chunk = chunks[0]
+        score = top_chunk.get("similarity", 0.0)
+
+        if score > 0.85:
+            logger.info(f"Skipping verification! High confidence: {score}")
+            return "format_final"
+
+        return "verifier"
 
     def _route_after_verify(self, state: RAGState) -> str:
         if state.get("verify_status") in (VerifyStatus.APPROVED, "approved"):

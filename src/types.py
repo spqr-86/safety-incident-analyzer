@@ -21,6 +21,8 @@ class RouteType(str, Enum):
     CHITCHAT = "chitchat"
     OUT_OF_SCOPE = "out_of_scope"
     RAG = "rag"
+    RAG_SIMPLE = "rag_simple"
+    RAG_COMPLEX = "rag_complex"
 
 
 class ChunkInfo(TypedDict):
@@ -29,3 +31,4 @@ class ChunkInfo(TypedDict):
     page_no: Optional[int]
     bbox: Optional[List[float]]
     visual_text: Optional[str]
+    similarity: Optional[float]

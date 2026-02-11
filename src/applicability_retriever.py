@@ -65,8 +65,13 @@ class ApplicabilityRetriever(BaseRetriever):
         # 2. Параллельный поиск
         for q in queries:
             # Semantic Search для каждой вариации
-            docs_semantic = self.vector_store.similarity_search(q, **self.search_kwargs)
-            all_docs.extend(docs_semantic)
+            docs_and_scores = self.vector_store.similarity_search_with_score(
+                q, **self.search_kwargs
+            )
+            for doc, score in docs_and_scores:
+                # Chroma returns distance. Assuming cosine distance: similarity = 1 - distance
+                doc.metadata["similarity_score"] = 1.0 - score
+                all_docs.append(doc)
 
         # BM25 ищем только по оригиналу (ключевые слова важны именно пользовательские)
         # или можно добавить первую (legal) вариацию, если хочется

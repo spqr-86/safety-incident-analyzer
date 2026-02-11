@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -194,53 +195,89 @@ if user_query:
     with st.chat_message("assistant"):
         if mas_mode and agent:
             # --- MULTI-AGENT RAG MODE ---
-            with st.spinner("Multi-Agent RAG (Router → Search → Generate → Verify)..."):
-                try:
-                    result = agent.invoke(user_query)
+            # Container for status updates
+            status_container = st.empty()
+            answer_placeholder = st.empty()
 
-                    answer = result.get("final_answer", "").strip()
+            try:
+                final_answer = ""
+                final_chunks = []
 
-                    if not answer:
-                        answer = "Не удалось сформировать ответ."
+                # Use the new streaming method
+                # Ensure we iterate correctly
+                for event in agent.stream_events(user_query):
+                    evt_type = event.get("type")
+                    if evt_type == "status":
+                        status_container.info(event["text"])
+                    elif evt_type == "final":
+                        final_answer = event.get("text", "")
+                        final_state = event.get("state", {})
+                        final_chunks = final_state.get("chunks_found", [])
 
-                    st.markdown(answer)
+                        # Clear status
+                        status_container.empty()
 
-                    # Проверка на наличие изображений в тексте ответа и их отрисовка
-                    for img_path in find_proof_images(answer):
+                        # Show final answer
+                        def stream_data():
+                            for word in final_answer.split(" "):
+                                yield word + " "
+                                time.sleep(0.02)
+
+                        answer_placeholder.write_stream(stream_data)
+
+                # Images
+                # 1. Get images explicitly found by the agent tools (reliable)
+                images_from_state = final_state.get("image_paths", [])
+
+                # 2. Get images mentioned in text (fallback)
+                images_from_text = find_proof_images(final_answer)
+
+                # Combine and deduplicate
+                all_images = list(set(images_from_state + images_from_text))
+
+                for img_path in all_images:
+                    if os.path.exists(img_path):
                         st.image(
                             img_path, caption="Визуальное доказательство", width=600
                         )
 
-                    # Сохраним последний ответ для истории
-                    st.session_state.last_answer = answer
+                st.session_state.last_answer = final_answer
 
-                    # Источники агента
-                    chunks = result.get("chunks_found", [])
-                    if chunks:
-                        with st.expander(
-                            f"🔎 Показать источники ({len(chunks)})", expanded=False
-                        ):
-                            for i, chunk in enumerate(chunks, start=1):
-                                src = chunk.get("source", "N/A")
-                                page = chunk.get("page_no", "")
-                                preview = (
-                                    chunk.get("content", "")[:500]
-                                    .strip()
-                                    .replace("\n", " ")
-                                )
-                                st.markdown(
-                                    f"**{i}. Источник:** `{src}`"
-                                    + (f" · стр. {page}" if page else "")
-                                )
-                                st.code(preview, language="markdown")
-                                st.divider()
-                    else:
-                        st.caption("Источники не найдены.")
+                # Sources
+                if final_chunks:
+                    with st.expander(
+                        f"🔎 Показать источники ({len(final_chunks)})", expanded=False
+                    ):
+                        for i, chunk in enumerate(final_chunks, start=1):
+                            src = chunk.get("source", "N/A")
+                            pg = chunk.get("page_no", "")
+                            sim = chunk.get("similarity", 0.0)
+                            content_txt = chunk.get("content", "")
+                            preview = (
+                                content_txt[:500].strip().replace("\n", " ")
+                                if content_txt
+                                else ""
+                            )
 
-                except Exception as e:
-                    st.error(f"Ошибка агента: {e}")
-                    answer = f"Извините, произошла ошибка: {e}"
-                    logger.error(f"Agent error: {e}", exc_info=True)
+                            header_parts = [f"**{i}. Источник:** `{src}`"]
+                            if pg:
+                                header_parts.append(f"стр. {pg}")
+                            if sim and isinstance(sim, (int, float)) and sim > 0:
+                                header_parts.append(f"🎯 {sim:.2f}")
+
+                            st.markdown(" · ".join(header_parts))
+                            st.code(preview, language="markdown")
+                            st.divider()
+                else:
+                    st.caption("Источники не найдены.")
+
+            except Exception as e:
+                st.error(f"Ошибка агента: {e}")
+                answer = f"Извините, произошла ошибка: {e}"
+                logger.error(f"Agent error: {e}", exc_info=True)
+            else:
+                answer = final_answer
+
         else:
             # --- RAG MODE (Legacy) ---
             try:

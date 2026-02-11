@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # Параметры для FlashRank
     RERANKING_MODEL: str = "ms-marco-MiniLM-L-12-v2"
-    FLASHRANK_CACHE_DIR: str = "/tmp/flashrank_cache"
+    FLASHRANK_CACHE_DIR: str = ".flashrank_cache"
 
     # Параметры для индексации и обработки документов
     MAX_FILE_SIZE: int = MAX_FILE_SIZE

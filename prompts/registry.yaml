@@ -18,3 +18,8 @@ multiagent_verifier:
   active_version: "v2"
   versions:
     v2: "agents/verifier_v2.j2"
+
+router_v2:
+  active_version: "v2"
+  versions:
+    v2: "agents/router_v2.j2"

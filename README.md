@@ -41,11 +41,15 @@
     *   `ResearchAgent`: "Думает" над найденными фрагментами, сопоставляет перекрестные ссылки.
     *   `VerificationAgent`: Проверяет факты в формате JSON, минимизируя галлюцинации.
 4.  **Prompt Management System v2**: Поддержка продвинутых техник (Few-Shot, Negative Constraints, Role Prompting).
-5.  **Evaluation Framework**: Скрипты для замера 11 метрик качества в разных режимах работы (`--mode mas/rag`).
-6.  **Multi-Agent RAG с ReAct-агентом (Gemini 3)**: Упрощённая архитектура:
-    *   Regex-фильтр: Детерминированная классификация chitchat / out_of_scope / rag (без LLM)
-    *   `RAG Agent` (Flash, thinking: 8192): Единый ReAct-агент с `search_documents` + `visual_proof`, условная декомпозиция для составных вопросов
-    *   `Verifier` (Flash, thinking: 1024): JSON-верификация по 6 критериям (approved / needs_revision)
+5.  **Performance Optimization**: 
+    *   **Smart Caching**: Кэширование BM25 индексов.
+    *   **Smart Routing**: LLM-маршрутизация запросов.
+    *   **Latency Optimized**: Отключение тяжелого реранкинга для агента (35s -> 4s поиск).
+6.  **Evaluation Framework**: Скрипты для замера 11 метрик качества в разных режимах работы (`--mode mas/rag`).
+7.  **Multi-Agent RAG с ReAct-агентом (Gemini 3)**: Упрощённая архитектура:
+    *   `Router Agent`: LLM-классификация (Simple/Complex/Chitchat) на базе Gemini Flash.
+    *   `RAG Agent` (Flash, thinking: 8192): Единый ReAct-агент с `search_documents` + `visual_proof`.
+    *   `Verifier`: JSON-верификация с возможностью пропуска для очевидных ответов (Smart Skip).
     *   Term Glossary: детерминированная расшифровка доменных сокращений перед фильтром
     *   Поддержка OpenAI и Gemini как LLM-провайдеров
 
@@ -149,10 +153,11 @@ flowchart TD
 
     subgraph MultiAgent [Multi-Agent RAG - ReAct Agent]
         Q2[Вопрос] --> Glossary[Term Glossary]
-        Glossary --> Filter[Regex Filter]
-        Filter -->|chitchat/out_of_scope| Direct[Direct Response]
-        Filter -->|rag| Agent[RAG Agent - Flash, thinking: 8192]
-        Agent --> VerifyMA[Verifier - Flash]
+        Glossary --> Router[Router Agent]
+        Router -->|chitchat/out_of_scope| Direct[Direct Response]
+        Router -->|rag| Agent[RAG Agent]
+        Agent --> VerifyMA[Verifier]
+        Agent -->|high_confidence| FinalMA
         VerifyMA -->|approved| FinalMA[Format Final]
         VerifyMA -->|needs_revision| Agent
     end

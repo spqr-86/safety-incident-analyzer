@@ -1,3 +1,5 @@
+import pickle
+import os
 from operator import itemgetter
 
 from flashrank import Ranker
@@ -21,14 +23,17 @@ def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
 
 
-def build_reranked_retriever(vector_store, bm25_retriever, llm, query_expansion=True):
-    """Build an ApplicabilityRetriever with FlashRank reranking.
+def build_reranked_retriever(
+    vector_store, bm25_retriever, llm, query_expansion=True, use_reranker=True
+):
+    """Build an ApplicabilityRetriever with optional FlashRank reranking.
 
     Args:
         vector_store: Chroma vector store
         bm25_retriever: BM25Retriever instance
         llm: LLM for query expansion
         query_expansion: Whether to use LLM query expansion (disable for agent mode)
+        use_reranker: Whether to apply FlashRank reranking (default True)
     """
     ensemble = ApplicabilityRetriever(
         vector_store=vector_store,
@@ -37,9 +42,13 @@ def build_reranked_retriever(vector_store, bm25_retriever, llm, query_expansion=
         search_kwargs={"k": settings.VECTOR_SEARCH_K},
         query_expansion=query_expansion,
     )
+
+    if not use_reranker:
+        return ensemble
+
     flashrank_client = Ranker(
         model_name=settings.RERANKING_MODEL,
-        cache_dir=getattr(settings, "FLASHRANK_CACHE_DIR", None),
+        cache_dir=settings.FLASHRANK_CACHE_DIR,
     )
     compressor = FlashrankRerank(client=flashrank_client, top_n=12)
     return ContextualCompressionRetriever(
@@ -51,13 +60,32 @@ def create_final_hybrid_chain():
     print("Создание финальной гибридной RAG-цепочки...")
     vector_store = load_vector_store()
 
-    all_data = vector_store.get(include=["metadatas", "documents"])
-    all_docs_as_objects = [
-        Document(page_content=doc, metadata=meta)
-        for doc, meta in zip(all_data["documents"], all_data["metadatas"])
-    ]
-    keyword_retriever = BM25Retriever.from_documents(all_docs_as_objects)
-    keyword_retriever.k = settings.VECTOR_SEARCH_K
+    bm25_cache_path = ".bm25_cache.pkl"
+    keyword_retriever = None
+
+    if os.path.exists(bm25_cache_path):
+        try:
+            print("Загрузка BM25 из кэша...")
+            with open(bm25_cache_path, "rb") as f:
+                keyword_retriever = pickle.load(f)
+        except Exception as e:
+            print(f"Ошибка загрузки кэша BM25: {e}")
+
+    if not keyword_retriever:
+        print("Построение индекса BM25 (может занять время)...")
+        all_data = vector_store.get(include=["metadatas", "documents"])
+        all_docs_as_objects = [
+            Document(page_content=doc, metadata=meta)
+            for doc, meta in zip(all_data["documents"], all_data["metadatas"])
+        ]
+        keyword_retriever = BM25Retriever.from_documents(all_docs_as_objects)
+        keyword_retriever.k = settings.VECTOR_SEARCH_K
+
+        try:
+            with open(bm25_cache_path, "wb") as f:
+                pickle.dump(keyword_retriever, f)
+        except Exception as e:
+            print(f"Не удалось сохранить кэш BM25: {e}")
 
     llm = get_llm()
 
@@ -83,7 +111,7 @@ def create_final_hybrid_chain():
     )
 
     agent_reranker = build_reranked_retriever(
-        vector_store, keyword_retriever, llm, query_expansion=False
+        vector_store, keyword_retriever, llm, query_expansion=False, use_reranker=False
     )
 
     print("Финальная гибридная цепочка успешно создана.")

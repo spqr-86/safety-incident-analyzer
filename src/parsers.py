@@ -71,7 +71,7 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
     chunks = []
 
     result_pattern = re.compile(
-        r"\[Result \d+\] File: ([^\|]+)\| Page: ([^\|]+)\| BBox: ([^\n]+)\n"
+        r"\[Result \d+\] File: ([^\|]+)\| Page: ([^\|]+)\| BBox: ([^\|]+)(?:\| Similarity: ([^\|]+))?\n"
         r"(?:Extended Context:\n)?(.*?)(?:\(IDs: [^\)]+\))?(?=\[Result|\Z)",
         re.DOTALL,
     )
@@ -80,7 +80,16 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
         source = match.group(1).strip()
         page_str = match.group(2).strip()
         bbox_str = match.group(3).strip()
-        content = match.group(4).strip() if match.group(4) else ""
+
+        sim_str = match.group(4)
+        similarity = None
+        if sim_str:
+            try:
+                similarity = float(sim_str.strip())
+            except ValueError:
+                pass
+
+        content = match.group(5).strip() if match.group(5) else ""
 
         try:
             page_no = int(page_str) if page_str != "N/A" else None
@@ -94,6 +103,9 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
             except json.JSONDecodeError:
                 pass
 
+        # We already extracted similarity from regex group 4
+        # sim_match block removed as it is now redundant
+
         chunks.append(
             ChunkInfo(
                 content=content,
@@ -101,6 +113,7 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
                 page_no=page_no,
                 bbox=bbox,
                 visual_text=None,
+                similarity=similarity,
             )
         )
 

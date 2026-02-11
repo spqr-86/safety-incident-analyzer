@@ -65,10 +65,18 @@ def make_tools(ctx: ToolContext):
 
         # 2. Smart Context Extension & Deduplication
         hits = set()
+        chunk_similarity = {}  # Store similarity scores for each chunk
+
         for doc in initial_docs:
             meta = doc.metadata
             if "chunk_id" in meta and "source" in meta:
-                hits.add((meta["source"], meta["chunk_id"]))
+                chunk_id = meta["chunk_id"]
+                hits.add((meta["source"], chunk_id))
+                # Store similarity if available
+                if "similarity_score" in meta:
+                    chunk_similarity[(meta["source"], chunk_id)] = meta[
+                        "similarity_score"
+                    ]
 
         # If we can't find chunk_id, fall back to simple return
         if not hits:
@@ -127,7 +135,7 @@ def make_tools(ctx: ToolContext):
                 try:
                     range_docs = query_chunks_by_range(vs, source, start, end)
                     if range_docs:
-                        merged = _merge_chunks(range_docs)
+                        merged = _merge_chunks(range_docs, chunk_similarity)
                         if merged:
                             final_blocks.append(merged)
                 except Exception as e:
@@ -141,10 +149,11 @@ def make_tools(ctx: ToolContext):
             pg = block["page_no"]
             bbox = block["bbox"]
             txt = block["content"]
+            sim = block.get("similarity", 0.0)
             txt_preview = txt[:2000]
 
             output.append(
-                f"[Result {i}] File: {src} | Page: {pg} | BBox: {bbox}\n"
+                f"[Result {i}] File: {src} | Page: {pg} | BBox: {bbox} | Similarity: {sim:.2f}\n"
                 f"Extended Context:\n{txt_preview}\n"
                 f"(IDs: {block['chunk_ids']})"
             )
@@ -292,20 +301,36 @@ def _visual_proof_impl(file_name, page_no, bbox, mode):
         return f"Error processing visual proof: {str(e)}"
 
 
-
-def _merge_chunks(docs: List[Document]) -> Dict:
+def _merge_chunks(docs: List[Document], similarity_map: Dict = None) -> Dict:
     """
     Merge a list of sorted chunks into a single context block.
-    Computes union BBox.
+    Computes union BBox and max similarity.
     """
     if not docs:
         return {}
+
+    similarity_map = similarity_map or {}
 
     # Merge Content
     full_content = "\n".join([d.page_content for d in docs])
 
     # Base Metadata from the middle or first chunk
     base_meta = docs[0].metadata.copy()
+
+    # Calculate Max Similarity for this block
+    max_similarity = 0.0
+    chunk_ids = []
+
+    for d in docs:
+        chunk_id = d.metadata.get("chunk_id")
+        chunk_ids.append(chunk_id)
+        source = d.metadata.get("source")
+
+        # Check if this chunk was in the initial search hits
+        if (source, chunk_id) in similarity_map:
+            score = similarity_map[(source, chunk_id)]
+            if score > max_similarity:
+                max_similarity = score
 
     # Compute Union BBox
     # [min_l, min_t, max_r, max_b]
@@ -339,5 +364,6 @@ def _merge_chunks(docs: List[Document]) -> Dict:
         "bbox": union_bbox,
         "page_no": target_page,
         "source": base_meta.get("source"),
-        "chunk_ids": [d.metadata.get("chunk_id") for d in docs],
+        "chunk_ids": chunk_ids,
+        "similarity": max_similarity,
     }
