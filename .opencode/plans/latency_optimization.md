@@ -24,10 +24,10 @@ Reduce system latency from ~60s+ to <15s for simple queries, and improve UX.
 - **Task:** Implement `asyncio.gather` for multiple independent sub-queries in `rag_agent`.
 - **Status:** Implemented `search_documents` and `visual_proof` tools in `src/agent_tools.py` (reverted to sync for compatibility, relying on LangGraph threading for parallel execution).
 
-### 2. Speculative Execution (Medium Priority)
+### 2. Speculative Execution (Medium Priority) ✅
 - **Goal:** Hide Router latency (~1s).
 - **Task:** Launch `Router` and `RAG Simple` in parallel.
-- **Logic:** If Router confirms "Simple", the result is already ready (saving the Router's thinking time). If "Complex", discard Simple result.
+- **Status:** Implemented in `agents/multiagent_rag.py` using `ThreadPoolExecutor` in `stream_events`. Agent prompt updated to use speculative chunks.
 
 ### 3. Semantic Cache (High Priority) ✅
 - **Goal:** Instant (<0.1s) answers for repeated/similar questions.
