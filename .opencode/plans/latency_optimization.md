@@ -22,7 +22,7 @@ Reduce system latency from ~60s+ to <15s for simple queries, and improve UX.
 ### 1. Parallel Search (High Priority) ✅
 - **Goal:** Reduce RAG Complex latency by 30-50% (currently sequential).
 - **Task:** Implement `asyncio.gather` for multiple independent sub-queries in `rag_agent`.
-- **Status:** Implemented async `search_documents` and `visual_proof` tools in `src/agent_tools.py`.
+- **Status:** Implemented `search_documents` and `visual_proof` tools in `src/agent_tools.py` (reverted to sync for compatibility, relying on LangGraph threading for parallel execution).
 
 ### 2. Speculative Execution (Medium Priority)
 - **Goal:** Hide Router latency (~1s).
