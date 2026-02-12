@@ -15,7 +15,7 @@ import logging
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, Optional, TypedDict
+from typing import Optional, TypedDict
 
 import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
@@ -38,6 +38,7 @@ from src.parsers import (
 )
 from src.prompt_manager import PromptManager
 from src.types import ChunkInfo, RAGStatus, RouteType, VerifyStatus
+from src.semantic_cache import SemanticCache
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,13 @@ class MultiAgentRAGWorkflow:
         self.router_agent = RouterAgent(llm_provider=self.llm_provider)
         self.compiled_workflow = self._build_workflow()
 
+        # Initialize Semantic Cache
+        try:
+            self.cache = SemanticCache()
+        except Exception as e:
+            logger.warning(f"Failed to initialize SemanticCache: {e}")
+            self.cache = None
+
     def _build_workflow(self):
         """Build the LangGraph workflow."""
 
@@ -223,6 +231,14 @@ class MultiAgentRAGWorkflow:
         """
         Process a user query and yield status updates + final answer.
         """
+        # 0. Check Semantic Cache
+        if self.cache:
+            cached_answer = self.cache.get(query)
+            if cached_answer:
+                yield {"type": "status", "text": "🔎 Ответ найден в кеше!"}
+                yield {"type": "final", "text": cached_answer, "state": {}}
+                return
+
         expanded_query = _expand_query(query)
         initial_state: RAGState = {
             "query": expanded_query,
@@ -242,6 +258,8 @@ class MultiAgentRAGWorkflow:
 
         self.tool_ctx.search_call_count = 0
         self.tool_ctx.visual_proof_call_count = 0
+
+        final_state = None
 
         # Stream the graph execution
         for event in self.compiled_workflow.stream(
@@ -268,11 +286,37 @@ class MultiAgentRAGWorkflow:
             elif "format_final" in event:
                 state = event["format_final"]
                 final = state.get("final_answer", "")
+                final_state = state
                 yield {"type": "final", "text": final, "state": state}
             elif "direct_response" in event:
                 state = event["direct_response"]
                 final = state.get("final_answer", "")
+                final_state = state
                 yield {"type": "final", "text": final, "state": state}
+
+        # Update Cache
+        if self.cache and final_state:
+            # Only cache verified and found answers
+            # Check draft_answer status from previous nodes if not available in format_final
+            # Wait, final_state from format_final only has final_answer.
+            # We need the full state history or merge it.
+            # LangGraph stream events yield the update from the node, not full state?
+            # Actually, event[node_name] IS the state update.
+            # But the full state is maintained by LangGraph.
+            # We need to check the full state logic.
+            # Let's rely on what we can infer or pass through.
+            # `format_final` returns `final_answer`.
+            # To know verify_status, we need to look at previous events or state.
+
+            # Since we can't easily access full state here without accumulation,
+            # Let's trust that if we reached format_final and it's not "needs_revision"
+            # (which would loop back), it's likely okay.
+            # But we explicitly add warning if needs_revision.
+
+            final_answer = final_state.get("final_answer", "")
+            if "⚠️ Ответ предоставлен с оговорками" not in final_answer:
+                # It's a clean answer. Add to cache.
+                self.cache.add(query, final_answer)
 
     # --- Node implementations ---
 

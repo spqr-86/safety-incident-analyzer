@@ -208,3 +208,4 @@ app.log
 benchmarks/
 static/visuals/
 .flashrank_cache/
+semantic_cache.json

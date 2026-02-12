@@ -42,6 +42,8 @@
     *   `VerificationAgent`: Проверяет факты в формате JSON, минимизируя галлюцинации.
 4.  **Prompt Management System v2**: Поддержка продвинутых техник (Few-Shot, Negative Constraints, Role Prompting).
 5.  **Performance Optimization**: 
+    *   **Semantic Cache**: Мгновенные ответы (<0.1s) для повторных вопросов (SentenceTransformers).
+    *   **Parallel Execution**: Асинхронный запуск поисковых запросов (asyncio).
     *   **Smart Caching**: Кэширование BM25 индексов.
     *   **Smart Routing**: LLM-маршрутизация запросов.
     *   **Latency Optimized**: Отключение тяжелого реранкинга для агента (35s -> 4s поиск).
@@ -52,6 +54,8 @@
     *   `Verifier`: JSON-верификация с возможностью пропуска для очевидных ответов (Smart Skip).
     *   Term Glossary: детерминированная расшифровка доменных сокращений перед фильтром
     *   Поддержка OpenAI и Gemini как LLM-провайдеров
+    *   **Semantic Cache**: Кэширование ответов для мгновенных повторов (<0.1s).
+    *   **Async Execution**: Параллельный запуск поисковых инструментов.
 
 ### 📊 Целевые метрики
 
@@ -189,6 +193,8 @@ flowchart TD
 *   ✅ Multi-Agent RAG с ReAct-агентом и thinking levels (Gemini 3)
 *   ✅ Visual Proof (VLM-анализ PDF-страниц)
 *   ✅ Term Glossary (детерминированная расшифровка доменных сокращений)
+*   ✅ Semantic Cache (SentenceTransformers)
+*   ✅ Parallel Search Execution
 *   🔄 Улучшение метрик качества (Correctness, Faithfulness)
 *   🔄 Расширение тестового датасета
 

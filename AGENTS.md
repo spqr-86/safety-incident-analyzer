@@ -7,6 +7,7 @@ The project is an **AI Safety Compliance Assistant** (RAG system for Russian wor
 
 ### Environment Setup
 - **Virtual Env:** `python -m venv venv && source venv/bin/activate`
+- **Rule:** Always use the virtual environment (`venv`) for all Python commands.
 - **Dependencies:** `pip install -r requirements.txt`
 - **Configuration:** Copy `.env.example` to `.env` and populate API keys.
 

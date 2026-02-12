@@ -1,3 +1,4 @@
+import asyncio
 import json
 import base64
 import io
@@ -39,7 +40,7 @@ def make_tools(ctx: ToolContext):
     """
 
     @tool
-    def search_documents(query: str) -> str:
+    async def search_documents(query: str) -> str:
         """
         Search for information in the safety regulations.
         Returns RELEVANT text chunks with their ID, Source File, Page Number, and Bounding Box (bbox).
@@ -58,7 +59,8 @@ def make_tools(ctx: ToolContext):
             return "Error: Retriever not initialized."
 
         # 1. Initial Retrieval
-        initial_docs = ctx.retriever.invoke(query)
+        # Use async invocation for retriever
+        initial_docs = await ctx.retriever.ainvoke(query)
 
         if not initial_docs:
             return "No relevant documents found."
@@ -94,7 +96,8 @@ def make_tools(ctx: ToolContext):
             return "\n\n".join(results)
 
         # Load vector store ONCE for all range queries
-        vs = load_vector_store()
+        # Run potentially blocking ChromaDB init in thread
+        vs = await asyncio.to_thread(load_vector_store)
 
         # Group hits by source
         hits_by_source = {}
@@ -133,7 +136,10 @@ def make_tools(ctx: ToolContext):
             # Fetch and Merge
             for start, end in ranges:
                 try:
-                    range_docs = query_chunks_by_range(vs, source, start, end)
+                    # Run blocking ChromaDB query in thread
+                    range_docs = await asyncio.to_thread(
+                        query_chunks_by_range, vs, source, start, end
+                    )
                     if range_docs:
                         merged = _merge_chunks(range_docs, chunk_similarity)
                         if merged:
@@ -161,7 +167,7 @@ def make_tools(ctx: ToolContext):
         return "\n\n".join(output)
 
     @tool
-    def visual_proof(
+    async def visual_proof(
         file_name: str, page_no: int, bbox: List[float], mode: str = "show"
     ) -> str:
         """
@@ -183,13 +189,10 @@ def make_tools(ctx: ToolContext):
                 "Сформулируй ответ на основе уже найденных данных."
             )
 
-        # Call the existing implementation helper or duplicate logic.
-        # Since the logic is long and depends on imports, duplicating is cleaner for isolation
-        # but introduces redundancy.
-        # Ideally we extract the implementation to a stateless function.
-        # For now I will call a helper function or inline it.
-        # I'll extract the implementation from the global function to a helper `_visual_proof_impl`
-        return _visual_proof_impl(file_name, page_no, bbox, mode)
+        # Run blocking image processing in thread
+        return await asyncio.to_thread(
+            _visual_proof_impl, file_name, page_no, bbox, mode
+        )
 
     return [search_documents, visual_proof]
 
