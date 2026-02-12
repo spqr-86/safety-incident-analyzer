@@ -13,6 +13,7 @@ Graph Structure:
 
 import logging
 import re
+import concurrent.futures
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, TypedDict
@@ -128,6 +129,7 @@ class RAGState(TypedDict):
     verify_issues: list[dict]
     revision_count: int
     final_answer: str
+    is_routed: bool
 
 
 class MultiAgentRAGWorkflow:
@@ -240,12 +242,44 @@ class MultiAgentRAGWorkflow:
                 return
 
         expanded_query = _expand_query(query)
+
+        # --- Speculative Execution: Run Router and Search in Parallel ---
+        def run_search():
+            """Speculative search using the search_documents tool."""
+            search_tool = next(
+                (t for t in self.tools if t.name == "search_documents"), None
+            )
+            if not search_tool:
+                return [], {}
+            try:
+                # Invoke tool directly. It returns a string (JSON of chunks).
+                result_str = search_tool.invoke({"query": expanded_query})
+                chunks = parse_search_results(result_str)
+                return chunks, {"query": expanded_query, "results_count": len(chunks)}
+            except Exception as e:
+                logger.error(f"Speculative search failed: {e}")
+                return [], {}
+
+        def run_router():
+            """Run router agent."""
+            return self.router_agent.route(expanded_query)
+
+        # Execute in parallel
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future_search = executor.submit(run_search)
+            future_router = executor.submit(run_router)
+
+            # Wait for results
+            search_chunks, search_record = future_search.result()
+            router_result = future_router.result()
+
+        # Build initial state with speculative results
         initial_state: RAGState = {
             "query": expanded_query,
-            "route_type": RouteType.RAG,
-            "direct_response": None,
-            "searches_performed": [],
-            "chunks_found": [],
+            "route_type": router_result["type"],
+            "direct_response": router_result.get("response"),
+            "searches_performed": [search_record] if search_record else [],
+            "chunks_found": search_chunks,
             "image_paths": [],
             "draft_answer": "",
             "unanswered": [],
@@ -254,9 +288,10 @@ class MultiAgentRAGWorkflow:
             "verify_issues": [],
             "revision_count": 0,
             "final_answer": "",
+            "is_routed": True,
         }
 
-        self.tool_ctx.search_call_count = 0
+        self.tool_ctx.search_call_count = 1 if search_record else 0
         self.tool_ctx.visual_proof_call_count = 0
 
         final_state = None
@@ -322,6 +357,10 @@ class MultiAgentRAGWorkflow:
 
     def _router_node(self, state: RAGState) -> dict:
         """LLM-based router: classify query."""
+        # If already routed (via speculative execution), skip re-running
+        if state.get("is_routed"):
+            return {}
+
         result = self.router_agent.route(state["query"])
 
         updates = {"route_type": result["type"]}
