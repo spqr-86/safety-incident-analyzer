@@ -270,8 +270,18 @@ class MultiAgentRAGWorkflow:
             future_router = executor.submit(run_router)
 
             # Wait for results
-            search_chunks, search_record = future_search.result()
-            router_result = future_router.result()
+            try:
+                search_chunks, search_record = future_search.result()
+            except Exception as e:
+                logger.error(f"Speculative search thread failed: {e}")
+                search_chunks, search_record = [], {}
+
+            try:
+                router_result = future_router.result()
+            except Exception as e:
+                logger.error(f"Router thread failed: {e}")
+                # Fallback to a safe default
+                router_result = {"type": RouteType.RAG_COMPLEX, "response": None}
 
         # Build initial state with speculative results
         initial_state: RAGState = {
