@@ -395,6 +395,7 @@ class MultiAgentRAGWorkflow:
         system_prompt = self.prompt_manager.render(
             "multiagent_rag_agent",
             searches_performed=state.get("searches_performed", []),
+            chunks=state.get("chunks_found", []),
         )
 
         # Build user message with optional revision feedback + previous draft
