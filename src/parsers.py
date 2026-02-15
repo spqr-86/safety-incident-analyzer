@@ -50,7 +50,7 @@ def parse_status_block(text: str) -> tuple[RAGStatus, str, list[str]]:
 
     answer = text
     answer_match = re.search(
-        r"===ANSWER===\s*\n(.*?)(?:===UNANSWERED===|\Z)", text, re.DOTALL
+        r"===ANSWER===\s*\n(.*?)(?:\n```|===UNANSWERED===|\Z)", text, re.DOTALL
     )
     if answer_match:
         answer = answer_match.group(1).strip()
@@ -71,7 +71,7 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
     chunks = []
 
     result_pattern = re.compile(
-        r"\[Result \d+\] File: ([^\|]+)\| Page: ([^\|]+)\| BBox: ([^\|]+)(?:\| Similarity: ([^\|]+))?\n"
+        r"\[Result \d+\] File: ([^\|]+)\| Page: ([^\|]+)\| BBox: ([^\|\n]+)(?:\| Similarity: ([^\|\n]+))?\n"
         r"(?:Extended Context:\n)?(.*?)(?:\(IDs: [^\)]+\))?(?=\[Result|\Z)",
         re.DOTALL,
     )
@@ -129,7 +129,33 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
                 page_no=None,
                 bbox=None,
                 visual_text=None,
-            )
-        )
+            ))
 
     return chunks
+
+def detect_incomplete_chunk(text: str) -> bool:
+    """
+    Detects if a text chunk is likely incomplete or requires visual analysis.
+    This is a heuristic and can be improved with more sophisticated NLP.
+    """
+    text = text.strip()
+    if not text:
+        return False
+
+    # Check for common continuation markers
+    continuation_markers = [
+        "...", "продолжение следует", "см. далее", "таблица", "схема"
+    ]
+    if any(marker in text.lower() for marker in continuation_markers):
+        return True
+
+    # Check if it ends abruptly without punctuation
+    if not re.search(r"[.?!;:]$", text) and len(text.split()) > 5:
+        return True
+    
+    # Check for bullet points or numbered lists that don't start at the beginning
+    if (re.search(r"^\s*[-*\d]+\s", text, re.MULTILINE) and 
+        not re.match(r"^\s*(1\.|-|\*)\s", text)):
+        return True
+
+    return False

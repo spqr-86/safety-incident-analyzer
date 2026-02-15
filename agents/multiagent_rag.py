@@ -14,6 +14,7 @@ Graph Structure:
 import logging
 import re
 import concurrent.futures
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, TypedDict
@@ -23,6 +24,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.retrievers import BaseRetriever
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import create_react_agent
+from langgraph.config import get_stream_writer # Import get_stream_writer
 
 from config.settings import settings
 from agents.router_agent import RouterAgent
@@ -36,6 +38,7 @@ from src.parsers import (
     parse_json_from_response,
     parse_search_results,
     parse_status_block,
+    detect_incomplete_chunk, # Import detect_incomplete_chunk
 )
 from src.prompt_manager import PromptManager
 from src.types import ChunkInfo, RAGStatus, RouteType, VerifyStatus
@@ -111,6 +114,76 @@ def _expand_query(query: str) -> str:
         return query + "\n\n[Глоссарий: " + "; ".join(expansions) + "]"
     return query
 
+# --- Helper for visual proof processing ---
+def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list[dict]:
+    """
+    Обрабатывает visual proof для списка чанков.
+    Отправляет статусы через writer.
+    """
+    processed_chunks = []
+    for i, chunk in enumerate(chunks[:settings.MAX_VISUAL_PROOFS]):  # Process top N chunks
+        # Check for metadata first, then use heuristic
+        needs_analyze = (
+            chunk.get("metadata", {}).get("needs_visual_analyze")
+            or detect_incomplete_chunk(chunk["content"])
+        )
+        
+        # Default values
+        chunk["visual_proof_mode"] = "none"
+        chunk["image_path"] = None
+
+        # Ensure chunk has necessary fields for visual proof tool
+        file_name = chunk.get("source")
+        page_no = chunk.get("page_no")
+        bbox = chunk.get("bbox")
+
+        if not all([file_name, page_no, bbox]):
+            # Cannot perform visual proof without complete metadata
+            writer({"status": f"⚠️ Фрагмент {i+1}: неполные метаданные для визуальной проверки"})
+            processed_chunks.append(chunk)
+            continue
+
+        if needs_analyze:
+            # Determine the reason for analysis (can be expanded)
+            reason_labels = {
+                "table_fragment": "содержит таблицу",
+                "incomplete_sentence": "обрезан",
+                "list_not_from_start": "список не с начала",
+                "continuation_marker": "маркер продолжения",
+                "header_only": "только заголовок",
+            }
+            # For now, just indicate it's incomplete if heuristic detected it
+            label = "неполный" if detect_incomplete_chunk(chunk["content"]) else "анализ"
+            if chunk.get("metadata", {}).get("reasons"):
+                label = reason_labels.get(chunk["metadata"]["reasons"][0], label)
+
+            writer({"status": f"🖼️ Фрагмент {i+1} {label} — анализирую изображение..."})
+            vp_result = visual_proof_tool.invoke({
+                "file_name": file_name,
+                "page_no": page_no,
+                "bbox": bbox,
+                "mode": "analyze"
+            })
+            extracted_text = extract_text(vp_result).replace("[Visual Analysis Result]\n", "").strip()
+            chunk["content"] = extracted_text # Update chunk content with VLM result
+            chunk["visual_text"] = extracted_text # Store VLM result separately as well
+            chunk["visual_proof_mode"] = "analyze"
+            chunk["image_path"] = f"Visual analysis for {file_name} page {page_no}" # Placeholder for image path for analyze mode
+            writer({"status": "🖼️ Текст извлечён из изображения"})
+        else:
+            writer({"status": f"✅ Фрагмент {i+1} полный"})
+            vp_result = visual_proof_tool.invoke({
+                "file_name": file_name,
+                "page_no": page_no,
+                "bbox": bbox,
+                "mode": "show"
+            })
+            chunk["visual_proof_mode"] = "show"
+            chunk["image_path"] = extract_text(vp_result) # Actual image path
+        
+        processed_chunks.append(chunk)
+    
+    return processed_chunks
 
 # --- State ---
 class RAGState(TypedDict):
@@ -122,6 +195,7 @@ class RAGState(TypedDict):
     searches_performed: list[dict]  # [{query, results_count}]
     chunks_found: list[ChunkInfo]
     image_paths: list[str]
+    visual_proof_mode: Optional[str] # New field to track visual proof mode
     draft_answer: str
     unanswered: list[str]
     rag_status: RAGStatus
@@ -168,10 +242,17 @@ class MultiAgentRAGWorkflow:
                 thinking_budget=settings.THINKING_VERIFIER,
                 response_mime_type="application/json",
             )
+            self.rag_complex_llm = get_gemini_llm( # New LLM for complex RAG
+                settings.GEMINI_FAST_MODEL,
+                thinking_budget=settings.THINKING_BUDGET,
+                temperature=0.2, # Lower temperature for more focused responses
+            )
         else:  # openai fallback
             openai_llm = get_llm()
             self.rag_llm = openai_llm
             self.verifier_llm = openai_llm
+            self.rag_complex_llm = openai_llm # New LLM for complex RAG
+
 
         self.prompt_manager = PromptManager()
         self.router_agent = RouterAgent(llm_provider=self.llm_provider)
@@ -191,7 +272,9 @@ class MultiAgentRAGWorkflow:
 
         graph.add_node("router", self._router_node)
         graph.add_node("direct_response", self._direct_response_node)
-        graph.add_node("rag_agent", self._rag_agent_node)
+        graph.add_node("rag_simple", self._rag_simple_node) # New node
+        graph.add_node("escalation", self._escalation_node) # New node
+        graph.add_node("rag_complex", self._rag_complex_node) # New node
         graph.add_node("verifier", self._verifier_node)
         graph.add_node("format_final", self._format_final_node)
 
@@ -199,30 +282,34 @@ class MultiAgentRAGWorkflow:
 
         graph.add_conditional_edges(
             "router",
-            self._route_after_router,
+            self._route_after_router, # This will be modified
             {
                 "direct_response": "direct_response",
-                "rag_agent": "rag_agent",
+                "rag_simple": "rag_simple", # Route to new simple RAG
+                "rag_complex": "rag_complex", # Route to new complex RAG
             },
         )
         graph.add_edge("direct_response", END)
 
-        # Conditional edge based on similarity score and content
-        graph.add_conditional_edges(
-            "rag_agent",
-            self._route_after_rag_agent,
+        graph.add_conditional_edges( # New conditional edges for rag_simple
+            "rag_simple",
+            self._route_after_rag_simple,
             {
+                "escalation": "escalation",
                 "verifier": "verifier",
                 "format_final": "format_final",
             },
         )
+        graph.add_edge("escalation", "rag_complex") # New edge
+        graph.add_edge("rag_complex", "verifier") # New edge
 
         graph.add_conditional_edges(
             "verifier",
             self._route_after_verify,
             {
                 "format_final": "format_final",
-                "rag_agent": "rag_agent",
+                "rag_simple": "rag_simple", # Route back to simple for revisions
+                "rag_complex": "rag_complex", # Route back to complex for revisions
             },
         )
         graph.add_edge("format_final", END)
@@ -232,64 +319,30 @@ class MultiAgentRAGWorkflow:
     def stream_events(self, query: str):
         """
         Process a user query and yield status updates + final answer.
+
+        Yields dicts with "type" key:
+          - {"type": "status", "text": "..."} — progress updates
+          - {"type": "final", "answer": "...", "chunks_found": [...], "image_paths": [...]}
         """
         # 0. Check Semantic Cache
         if self.cache:
             cached_answer = self.cache.get(query)
             if cached_answer:
                 yield {"type": "status", "text": "🔎 Ответ найден в кеше!"}
-                yield {"type": "final", "text": cached_answer, "state": {}}
+                yield {
+                    "type": "final",
+                    "answer": cached_answer,
+                    "chunks_found": [],
+                    "image_paths": [],
+                }
                 return
 
         expanded_query = _expand_query(query)
 
-        # --- Speculative Execution: Run Router and Search in Parallel ---
-        def run_search():
-            """Speculative search using the search_documents tool."""
-            search_tool = next(
-                (t for t in self.tools if t.name == "search_documents"), None
-            )
-            if not search_tool:
-                return [], {}
-            try:
-                # Invoke tool directly. It returns a string (JSON of chunks).
-                result_str = search_tool.invoke({"query": expanded_query})
-                chunks = parse_search_results(result_str)
-                return chunks, {"query": expanded_query, "results_count": len(chunks)}
-            except Exception as e:
-                logger.error(f"Speculative search failed: {e}")
-                return [], {}
-
-        def run_router():
-            """Run router agent."""
-            return self.router_agent.route(expanded_query)
-
-        # Execute in parallel
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future_search = executor.submit(run_search)
-            future_router = executor.submit(run_router)
-
-            # Wait for results
-            try:
-                search_chunks, search_record = future_search.result()
-            except Exception as e:
-                logger.error(f"Speculative search thread failed: {e}")
-                search_chunks, search_record = [], {}
-
-            try:
-                router_result = future_router.result()
-            except Exception as e:
-                logger.error(f"Router thread failed: {e}")
-                # Fallback to a safe default
-                router_result = {"type": RouteType.RAG_COMPLEX, "response": None}
-
-        # Build initial state with speculative results
         initial_state: RAGState = {
             "query": expanded_query,
-            "route_type": router_result["type"],
-            "direct_response": router_result.get("response"),
-            "searches_performed": [search_record] if search_record else [],
-            "chunks_found": search_chunks,
+            "searches_performed": [],
+            "chunks_found": [],
             "image_paths": [],
             "draft_answer": "",
             "unanswered": [],
@@ -298,70 +351,131 @@ class MultiAgentRAGWorkflow:
             "verify_issues": [],
             "revision_count": 0,
             "final_answer": "",
-            "is_routed": True,
+            "is_routed": False,
         }
 
-        self.tool_ctx.search_call_count = 1 if search_record else 0
+        self.tool_ctx.search_call_count = 0
         self.tool_ctx.visual_proof_call_count = 0
 
-        final_state = None
+        final_answer = ""
 
-        # Stream the graph execution
+        # stream_mode="custom" — single mode, no tuple wrapping
         for event in self.compiled_workflow.stream(
-            initial_state, {"recursion_limit": 50}
+            initial_state, {"recursion_limit": 50}, stream_mode="custom"
         ):
-            # Yield node transitions
-            if "router" in event:
-                # Determine status message based on route
-                state = event["router"]
-                rtype = state.get("route_type")
-                if rtype == RouteType.RAG_COMPLEX:
-                    yield {
-                        "type": "status",
-                        "text": "🧠 Вопрос сложный, анализирую детали...",
-                    }
-                elif rtype == RouteType.RAG_SIMPLE:
-                    yield {"type": "status", "text": "🔎 Ищу ответ в документах..."}
-            elif "rag_agent" in event:
-                # Don't overwrite status if we already set it in router,
-                # but maybe update if it's taking long?
-                pass
-            elif "verifier" in event:
-                yield {"type": "status", "text": "⚖️ Проверяю корректность ответа..."}
-            elif "format_final" in event:
-                state = event["format_final"]
-                final = state.get("final_answer", "")
-                final_state = state
-                yield {"type": "final", "text": final, "state": state}
-            elif "direct_response" in event:
-                state = event["direct_response"]
-                final = state.get("final_answer", "")
-                final_state = state
-                yield {"type": "final", "text": final, "state": state}
+            if not isinstance(event, dict):
+                continue
 
-        # Update Cache
-        if self.cache and final_state:
-            # Only cache verified and found answers
-            # Check draft_answer status from previous nodes if not available in format_final
-            # Wait, final_state from format_final only has final_answer.
-            # We need the full state history or merge it.
-            # LangGraph stream events yield the update from the node, not full state?
-            # Actually, event[node_name] IS the state update.
-            # But the full state is maintained by LangGraph.
-            # We need to check the full state logic.
-            # Let's rely on what we can infer or pass through.
-            # `format_final` returns `final_answer`.
-            # To know verify_status, we need to look at previous events or state.
+            if event.get("type") == "final":
+                final_answer = event.get("answer", "")
+                yield event
+            elif "status" in event and "type" not in event:
+                yield {"type": "status", "text": event["status"]}
+            else:
+                yield event
 
-            # Since we can't easily access full state here without accumulation,
-            # Let's trust that if we reached format_final and it's not "needs_revision"
-            # (which would loop back), it's likely okay.
-            # But we explicitly add warning if needs_revision.
-
-            final_answer = final_state.get("final_answer", "")
+        # Update cache (skip answers with verification warnings)
+        if self.cache and final_answer:
             if "⚠️ Ответ предоставлен с оговорками" not in final_answer:
-                # It's a clean answer. Add to cache.
                 self.cache.add(query, final_answer)
+
+    def _get_tool_by_name(self, tool_name: str):
+        for tool_obj in self.tools:
+            if tool_obj.name == tool_name:
+                return tool_obj
+        return None
+
+    def _search_documents_tool_wrapper(self, query: str) -> list[ChunkInfo]:
+        search_tool = self._get_tool_by_name("search_documents")
+        if not search_tool:
+            logger.error("search_documents tool not found.")
+            return []
+        
+        try:
+            result_str = search_tool.invoke({"query": query})
+            chunks = parse_search_results(result_str)
+            return chunks
+        except Exception as e:
+            logger.error(f"Error invoking search_documents tool: {e}")
+            return []
+
+    def _build_search_query(self, state: RAGState) -> str:
+        # For simple RAG, just use the main query
+        return state["query"]
+
+    def _rephrase_query(self, state: RAGState, search_results: list[ChunkInfo]) -> str:
+        # Use LLM to rephrase query if initial search failed or was not ideal
+        prompt = self.prompt_manager.render(
+            "applicability_retriever",
+            question=state["query"],
+            context=search_results # Provide context of initial failed search
+        )
+        response = self.rag_llm.invoke([HumanMessage(content=prompt)])
+        return extract_text(response.content).strip()
+
+    def _build_rag_simple_context(self, state: RAGState, chunks: list[ChunkInfo]) -> str:
+        # Build prompt for rag_simple LLM
+        prompt = self.prompt_manager.render(
+            "rag_simple",
+            query=state["query"],
+            context=chunks
+        )
+        return prompt
+    
+    def _decompose_query(self, query: str, llm) -> list[str]:
+        # Placeholder for query decomposition
+        prompt = self.prompt_manager.render(
+            "applicability_retriever",
+            question=query
+        )
+        response = llm.invoke([HumanMessage(content=prompt)])
+        # Expecting a list of subquestions, potentially JSON parsed
+        # For now, a very simple decomposition based on sentences or just returning the query
+        text_content = extract_text(response.content)
+        # Attempt to parse as JSON list, otherwise split by sentence.
+        try:
+            parsed = json.loads(text_content)
+            if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        
+        # Fallback to splitting by sentence or just returning the query if no clear decomposition
+        sentences = re.split(r'(?<=[.!?])\s+', text_content)
+        return [s.strip() for s in sentences if s.strip()] or [query]
+            
+    def _rephrase_subquestion(self, subquestion: str, all_chunks: list[ChunkInfo]) -> str:
+        # Placeholder for rephrasing subquestions, similar to _rephrase_query but for subquestions
+        prompt = self.prompt_manager.render(
+            "applicability_retriever",
+            question=subquestion,
+            context=all_chunks
+        )
+        response = self.rag_complex_llm.invoke([HumanMessage(content=prompt)])
+        return extract_text(response.content).strip()
+
+    def _filter_chunks_for_context(self, chunks: list[ChunkInfo]) -> list[ChunkInfo]:
+        # Placeholder for filtering chunks, can use another LLM call or rule-based
+        # For now, a simple filter to remove empty chunks or very short ones
+        return [c for c in chunks if c.get("content") and len(c["content"]) > settings.MIN_CHUNK_LENGTH_FOR_FILTERING]
+
+    def _build_rag_complex_context(self, state: RAGState, chunks: list[ChunkInfo], subquestions: list[str]) -> str:
+        # Build prompt for rag_complex LLM
+        prompt = self.prompt_manager.render(
+            "rag_complex",
+            query=state["query"],
+            subquestions=subquestions,
+            context=chunks,
+            searches_performed=state.get("searches_performed", []),
+        )
+        return prompt
+
+    @staticmethod
+    def _max_similarity(results: list[ChunkInfo]) -> float:
+        """Return the maximum similarity score across all results."""
+        if not results:
+            return 0.0
+        return max(r.get("similarity", 0.0) or 0.0 for r in results)
 
     # --- Node implementations ---
 
@@ -371,66 +485,190 @@ class MultiAgentRAGWorkflow:
         if state.get("is_routed"):
             return {}
 
+        writer = get_stream_writer()
+        writer({"status": "🔍 Классифицирую запрос..."})
+
         result = self.router_agent.route(state["query"])
 
         updates = {"route_type": result["type"]}
         if result["response"]:
             updates["direct_response"] = result["response"]
+        
+        route_labels = {
+            RouteType.RAG_SIMPLE: "📂 Простой вопрос — ищу в документах",
+            RouteType.RAG_COMPLEX: "📂 Составной вопрос — провожу развёрнутый анализ",
+            RouteType.CHITCHAT: f"💬 {result['type']}",
+            RouteType.OUT_OF_SCOPE: f"💬 {result['type']}",
+        }
+        writer({"status": route_labels.get(result['type'], "🤔 Думаю...")}) # Default status if route type is unknown
+        
         return updates
 
     def _direct_response_node(self, state: RAGState) -> dict:
         """Return direct response for chitchat/out_of_scope."""
-        if state.get("direct_response"):
-            return {"final_answer": state["direct_response"]}
+        writer = get_stream_writer()
 
-        route_type = state.get("route_type", "")
-        if route_type in (RouteType.CHITCHAT, "chitchat"):
+        if state.get("direct_response"):
+            response = state["direct_response"]
+        elif state.get("route_type") in (RouteType.CHITCHAT, "chitchat"):
             response = "Здравствуйте! Я готов помочь с вопросами по охране труда и промышленной безопасности."
         else:
-            response = "Этот вопрос находится за пределами моей компетенции. Я специализируюсь на вопросах охраны труда и промышленной безопасности."
+            response = (
+                "Этот вопрос не относится к охране труда и промышленной безопасности."
+            )
+
+        writer({
+            "type": "final",
+            "answer": response,
+            "chunks_found": [],
+            "image_paths": [],
+        })
         return {"final_answer": response}
 
-    def _rag_agent_node(self, state: RAGState) -> dict:
-        """RAG Agent: ReAct agent with adaptive decomposition."""
-        system_prompt = self.prompt_manager.render(
-            "multiagent_rag_agent",
-            searches_performed=state.get("searches_performed", []),
-            chunks=state.get("chunks_found", []),
+    def _rag_simple_node(self, state: RAGState) -> dict:
+        writer = get_stream_writer()
+        
+        # --- Preprocessing ---
+        query = self._build_search_query(state)
+        
+        # --- Search 1 ---
+        writer({"status": f"🔎 Поиск: \"{query}\""})
+        results = self._search_documents_tool_wrapper(query)
+        
+        searches = [{"query": query, "results_count": len(results)}]
+        
+        visual_proof_tool = self._get_tool_by_name("visual_proof")
+        if not visual_proof_tool:
+            logger.error("visual_proof tool not found.")
+            return {"chunks_found": [], "searches_performed": searches, "rag_status": RAGStatus.NOT_FOUND,}
+
+        if results and self._max_similarity(results) >= settings.SIMILARITY_THRESHOLD_ACCEPTANCE:
+            best_score = self._max_similarity(results)
+            top = results[0]
+            writer({
+                "status": f"📄 Найдено {len(results)} фрагментов "
+                          f"(лучший: {top.get('source', 'unknown')}, "
+                          f"score: {best_score:.2f})"
+            })
+        else:
+            # --- Search 2 (rephrasing) ---
+            query2 = self._rephrase_query(state, results)
+            writer({"status": f"🔎 Уточняю: \"{query2}\""})
+            results2 = self._search_documents_tool_wrapper(query2)
+            searches.append({"query": query2, "results_count": len(results2)})
+
+            if results2 and self._max_similarity(results2) >= settings.SIMILARITY_THRESHOLD_ACCEPTANCE:
+                results = results2
+                writer({"status": f"📄 Найдено: {results2[0].get('source', 'unknown')}"})
+            else:
+                writer({"status": "⚠️ Релевантных фрагментов не найдено"})
+                return {
+                    "chunks_found": [],
+                    "searches_performed": searches,
+                    "rag_status": RAGStatus.NOT_FOUND,
+                }
+        
+        # --- Visual proof ---
+        chunks = _process_visual_proof(results, visual_proof_tool, writer)
+        
+        # --- Generate answer ---
+        writer({"status": "📝 Формирую ответ..."})
+        draft = self.rag_llm.invoke(
+            [HumanMessage(content=self._build_rag_simple_context(state, chunks))]
         )
+        
+        return {
+            "chunks_found": chunks,
+            "searches_performed": searches,
+            "draft_answer": extract_text(draft.content),
+            "rag_status": RAGStatus.FOUND,
+        }
 
-        # Build user message with optional revision feedback + previous draft
-        user_msg = state["query"]
-        if state.get("verify_issues"):
-            draft = state.get("draft_answer", "")
-            feedback = "\n".join(
-                f"- {i.get('description', '')} → {i.get('suggestion', '')}"
-                for i in state["verify_issues"]
-            )
-            user_msg += (
-                f"\n\n[РЕВИЗИЯ]\n"
-                f"Твой предыдущий ответ:\n{draft}\n\n"
-                f"Проблемы, найденные верификатором:\n{feedback}\n"
-                f"Исправь указанные проблемы. Можешь выполнить дополнительный поиск если нужно."
-            )
+    def _escalation_node(self, state: RAGState) -> dict:
+        """Placeholder for Escalation node."""
+        writer = get_stream_writer()
+        writer({"status": "🔄 Простой поиск не дал результатов. Провожу углублённый анализ документов..."})
+        return {"escalated_from_simple": True}
 
-        tools = self.tools
+    def _rag_complex_node(self, state: RAGState) -> dict:
+        writer = get_stream_writer()
+        
+        # --- Decomposition ---
+        writer({"status": "🧩 Разбиваю вопрос на подвопросы..."})
+        subquestions = self._decompose_query(state["query"], self.rag_complex_llm)
+        writer({"status": f"🧩 Выделено {len(subquestions)} подвопросов"})
+        
+        # --- Context for escalation ---
+        prev_searches = state.get("searches_performed", [])
+        prev_queries = {s["query"] for s in prev_searches}
+        
+        # --- Search for each subquestion ---
+        all_chunks = []
+        all_searches = list(prev_searches)
+        total = len(subquestions)
+        
+        visual_proof_tool = self._get_tool_by_name("visual_proof")
+        if not visual_proof_tool:
+            logger.error("visual_proof tool not found.")
+            return {"chunks_found": [], "searches_performed": all_searches, "rag_status": RAGStatus.NOT_FOUND,}
 
-        agent = create_react_agent(
-            model=self.rag_llm,
-            tools=tools,
-            prompt=system_prompt,
-            version="v1",
+        for i, sq in enumerate(subquestions, 1):
+            # Skip already performed queries (from escalation)
+            if sq in prev_queries:
+                writer({"status": f"⏭️ [{i}/{total}] Уже искали: \"{sq}\""})
+                continue
+            
+            # Iteration 1: exact terms
+            writer({"status": f"🔎 [{i}/{total}] Ищу: \"{sq}\""})
+            results = self._search_documents_tool_wrapper(sq)
+            all_searches.append({"query": sq, "results_count": len(results)})
+            
+            if results and self._max_similarity(results) >= settings.SIMILARITY_THRESHOLD_ACCEPTANCE:
+                all_chunks.extend(results[:3]) # Take top 3 relevant chunks
+                writer({"status": f"📄 [{i}/{total}] Найдено: {results[0].get('source', 'unknown')}"})
+            else:
+                # Iteration 2: synonyms + metadata
+                sq2 = self._rephrase_subquestion(sq, all_chunks) # Rephrase based on current context
+                writer({"status": f"⚠️ [{i}/{total}] Не найдено, пробую: \"{sq2}\""})
+                results2 = self._search_documents_tool_wrapper(sq2)
+                all_searches.append({"query": sq2, "results_count": len(results2)})
+
+                if results2 and self._max_similarity(results2) >= settings.SIMILARITY_THRESHOLD_ACCEPTANCE:
+                    all_chunks.extend(results2[:3])
+                    writer({"status": f"📄 [{i}/{total}] Найдено: {results2[0].get('source', 'unknown')}"})
+                else:
+                    writer({"status": f"❌ [{i}/{total}] Данные не обнаружены"})
+        
+        # --- Visual proof ---
+        if all_chunks:
+            chunks = _process_visual_proof(all_chunks, visual_proof_tool, writer)
+        else:
+            chunks = []
+        
+        # --- Filtering ---
+        if chunks:
+            writer({"status": "🔬 Фильтрую нерелевантное..."})
+            chunks = self._filter_chunks_for_context(chunks)
+        
+        # --- Generate answer ---
+        writer({"status": "📝 Собираю ответ из найденных фрагментов..."})
+        draft = self.rag_complex_llm.invoke(
+            [HumanMessage(content=self._build_rag_complex_context(state, chunks, subquestions))]
         )
-        result = agent.invoke(
-            {"messages": [("user", user_msg)]},
-            {"recursion_limit": settings.MAX_AGENT_STEPS},
-        )
-        messages = result["messages"]
-
-        return self._extract_state_from_messages(messages)
+        
+        return {
+            "chunks_found": chunks,
+            "searches_performed": all_searches,
+            "subquestions": subquestions,
+            "draft_answer": extract_text(draft.content),
+            "rag_status": RAGStatus.FOUND if chunks else RAGStatus.NOT_FOUND,
+        }
 
     def _verifier_node(self, state: RAGState) -> dict:
         """Verify draft answer against found chunks."""
+        writer = get_stream_writer()
+        writer({"status": "✅ Проверяю точность ответа..."})
+
         prompt = self.prompt_manager.render(
             "multiagent_verifier",
             query=state["query"],
@@ -444,6 +682,10 @@ class MultiAgentRAGWorkflow:
         revision_count = state.get("revision_count", 0)
         if status == "needs_revision":
             revision_count += 1
+            issues_count = len(parsed.get("issues", []))
+            writer({"status": f"🔄 Найдено {issues_count} замечаний, корректирую..."})
+        else:
+            writer({"status": "✅ Ответ проверен"})
 
         return {
             "verify_status": status,
@@ -453,7 +695,11 @@ class MultiAgentRAGWorkflow:
 
     def _format_final_node(self, state: RAGState) -> dict:
         """Format the final answer."""
+        writer = get_stream_writer()
         answer = state.get("draft_answer", "")
+
+        # Strip <thinking> blocks from LLM output
+        answer = re.sub(r"<thinking>.*?</thinking>\s*", "", answer, flags=re.DOTALL)
 
         # Strip leaked status markers from Gemini responses
         status_idx = answer.find("===STATUS===")
@@ -463,6 +709,12 @@ class MultiAgentRAGWorkflow:
         if state.get("verify_status") == VerifyStatus.NEEDS_REVISION:
             answer += "\n\n⚠️ Ответ предоставлен с оговорками, рекомендуется дополнительная проверка."
 
+        writer({
+            "type": "final",
+            "answer": answer,
+            "chunks_found": state.get("chunks_found", []),
+            "image_paths": state.get("image_paths", []),
+        })
         return {"final_answer": answer}
 
     # --- Routing functions ---
@@ -474,38 +726,33 @@ class MultiAgentRAGWorkflow:
             RouteType.OUT_OF_SCOPE,
         ):
             return "direct_response"
-        return "rag_agent"
+        elif route_type == RouteType.RAG_SIMPLE:
+            return "rag_simple"
+        return "rag_complex" # Default to complex if not simple or direct
 
-    def _route_after_rag_agent(self, state: RAGState) -> str:
-        """Decide whether to verify or trust the answer."""
+    def _route_after_rag_simple(self, state: RAGState) -> str:
+        """Decide whether to escalate, verify or trust the answer after simple RAG."""
         chunks = state.get("chunks_found", [])
 
-        # 1. If not found or partial, verify/revise
-        if state.get("rag_status") != RAGStatus.FOUND:
-            return "verifier"
+        if state.get("rag_status") == RAGStatus.NOT_FOUND or not chunks:
+            return "escalation"
 
-        if not chunks:
-            return "verifier"
-
-        # 2. Check visual proof
+        # Check visual proof
         if any(c.get("visual_text") for c in chunks):
-            # If we used VLM, better verify it
             return "verifier"
 
-        # 3. Check source consistency
+        # Check source consistency (more than one source usually means need for complex verification)
         sources = {c.get("source") for c in chunks if c.get("source")}
         if len(sources) > 1:
-            return "verifier"  # Cross-document synthesis needs check
+            return "verifier"
 
-        # 4. Check similarity score
-        # Since we sort by relevance, the first chunk is the most important
+        # Check similarity score (high confidence allows skipping verification)
         top_chunk = chunks[0]
         score = top_chunk.get("similarity", 0.0)
-
-        if score > 0.85:
+        if score > settings.SIMILARITY_THRESHOLD_FOR_VERIFIER_SKIP:
             logger.info(f"Skipping verification! High confidence: {score}")
             return "format_final"
-
+        
         return "verifier"
 
     def _route_after_verify(self, state: RAGState) -> str:
@@ -513,7 +760,13 @@ class MultiAgentRAGWorkflow:
             return "format_final"
         if state.get("revision_count", 0) > settings.MAX_REVISIONS:
             return "format_final"  # max revisions reached
-        return "rag_agent"
+        
+        # Route back to the appropriate RAG node for revision
+        # This assumes the revision logic should go to the 'complex' if it was already there,
+        # or simple if it was originally simple. This might need more sophisticated state tracking.
+        if state.get("escalated_from_simple"): # Assuming a state variable to track this
+            return "rag_complex"
+        return "rag_simple"
 
     # --- Message history parser ---
 

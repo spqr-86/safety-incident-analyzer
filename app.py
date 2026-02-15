@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 
@@ -186,6 +187,7 @@ user_query = st.chat_input(
     "Спросите, например: «Какие требования к ширине эвакуационных путей?»"
 )
 if user_query:
+    answer = "" # Initialize answer to prevent NameError
     # Показываем сообщение пользователя
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -195,88 +197,81 @@ if user_query:
     with st.chat_message("assistant"):
         if mas_mode and agent:
             # --- MULTI-AGENT RAG MODE ---
-            # Container for status updates
             status_container = st.empty()
-            answer_placeholder = st.empty()
+            answer_container = st.empty()
 
-            try:
-                final_answer = ""
-                final_chunks = []
+            statuses = []
+            final_answer = ""
+            final_chunks = []
+            images_from_state = []
 
-                # Use the new streaming method
-                # Ensure we iterate correctly
-                for event in agent.stream_events(user_query):
-                    evt_type = event.get("type")
-                    if evt_type == "status":
-                        status_container.info(event["text"])
-                    elif evt_type == "final":
-                        final_answer = event.get("text", "")
-                        final_state = event.get("state", {})
-                        final_chunks = final_state.get("chunks_found", [])
+            for event in agent.stream_events(user_query):
+                if not isinstance(event, dict):
+                    continue
 
-                        # Clear status
-                        status_container.empty()
+                if event.get("type") == "status":
+                    statuses.append(event["text"])
+                    with status_container:
+                        for s in statuses[-3:]:
+                            st.caption(s)
+                elif event.get("type") == "final":
+                    final_answer = event.get("answer", "")
+                    final_chunks = event.get("chunks_found", [])
+                    images_from_state = event.get("image_paths", [])
+                    answer_container.markdown(final_answer)
 
-                        # Show final answer
-                        def stream_data():
-                            for word in final_answer.split(" "):
-                                yield word + " "
-                                time.sleep(0.02)
+            # After streaming finishes
+            status_container.empty()
 
-                        answer_placeholder.write_stream(stream_data)
+            # --- DEBUG: Показать сырой ответ ---
+            with st.expander("🐞 Debug: Сырой ответ от агента"):
+                st.code(final_answer, language="text")
+            # ------------------------------------
 
-                # Images
-                # 1. Get images explicitly found by the agent tools (reliable)
-                images_from_state = final_state.get("image_paths", [])
+            # The rest of the logic for images and sources remains similar,
+            # but will use final_answer and final_chunks.
 
-                # 2. Get images mentioned in text (fallback)
-                images_from_text = find_proof_images(final_answer)
+            # Combine and deduplicate images
+            images_from_text = find_proof_images(final_answer) # Check for images mentioned in final answer content
+            all_images = list(set(images_from_state + images_from_text))
 
-                # Combine and deduplicate
-                all_images = list(set(images_from_state + images_from_text))
+            for img_path in all_images:
+                if os.path.exists(img_path):
+                    st.image(
+                        img_path, caption="Визуальное доказательство", width=600
+                    )
 
-                for img_path in all_images:
-                    if os.path.exists(img_path):
-                        st.image(
-                            img_path, caption="Визуальное доказательство", width=600
+            st.session_state.last_answer = final_answer
+
+            # Sources
+            if final_chunks:
+                with st.expander(
+                    f"🔎 Показать источники ({len(final_chunks)})", expanded=False
+                ):
+                    for i, chunk in enumerate(final_chunks, start=1):
+                        src = chunk.get("source", "N/A")
+                        pg = chunk.get("page_no", "")
+                        sim = chunk.get("similarity", 0.0)
+                        content_txt = chunk.get("content", "")
+                        preview = (
+                            content_txt[:500].strip().replace("\n", " ")
+                            if content_txt
+                            else ""
                         )
 
-                st.session_state.last_answer = final_answer
+                        header_parts = [f"**{i}. Источник:** `{src}`"]
+                        if pg:
+                            header_parts.append(f"стр. {pg}")
+                        if sim and isinstance(sim, (int, float)) and sim > 0:
+                            header_parts.append(f"🎯 {sim:.2f}")
 
-                # Sources
-                if final_chunks:
-                    with st.expander(
-                        f"🔎 Показать источники ({len(final_chunks)})", expanded=False
-                    ):
-                        for i, chunk in enumerate(final_chunks, start=1):
-                            src = chunk.get("source", "N/A")
-                            pg = chunk.get("page_no", "")
-                            sim = chunk.get("similarity", 0.0)
-                            content_txt = chunk.get("content", "")
-                            preview = (
-                                content_txt[:500].strip().replace("\n", " ")
-                                if content_txt
-                                else ""
-                            )
-
-                            header_parts = [f"**{i}. Источник:** `{src}`"]
-                            if pg:
-                                header_parts.append(f"стр. {pg}")
-                            if sim and isinstance(sim, (int, float)) and sim > 0:
-                                header_parts.append(f"🎯 {sim:.2f}")
-
-                            st.markdown(" · ".join(header_parts))
-                            st.code(preview, language="markdown")
-                            st.divider()
-                else:
-                    st.caption("Источники не найдены.")
-
-            except Exception as e:
-                st.error(f"Ошибка агента: {e}")
-                answer = f"Извините, произошла ошибка: {e}"
-                logger.error(f"Agent error: {e}", exc_info=True)
+                        st.markdown(" · ".join(header_parts))
+                        st.code(preview, language="markdown")
+                        st.divider()
             else:
-                answer = final_answer
+                st.caption("Источники не найдены.")
+
+            answer = final_answer # Assign to answer for history
 
         else:
             # --- RAG MODE (Legacy) ---

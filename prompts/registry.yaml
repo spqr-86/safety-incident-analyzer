@@ -23,3 +23,13 @@ router_v2:
   active_version: "v2"
   versions:
     v2: "agents/router_v2.j2"
+
+rag_simple:
+  active_version: "v1"
+  versions:
+    v1: "agents/rag_simple_v1.j2"
+
+rag_complex:
+  active_version: "v1"
+  versions:
+    v1: "agents/rag_complex_v1.j2"

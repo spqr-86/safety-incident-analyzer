@@ -57,6 +57,12 @@ class Settings(BaseSettings):
     MAX_AGENT_STEPS: int = 16
     MAX_SEARCH_CALLS: int = 2
     MAX_VISUAL_PROOF_CALLS: int = 1
+    MAX_VISUAL_PROOFS: int = 3  # How many chunks to process for visual proof
+
+    # RAG node specific settings
+    MIN_CHUNK_LENGTH_FOR_FILTERING: int = 50 # Minimum length for a chunk to be considered relevant after filtering
+    SIMILARITY_THRESHOLD_ACCEPTANCE: float = 0.10  # Minimum similarity to consider results found (max across all results)
+    SIMILARITY_THRESHOLD_FOR_VERIFIER_SKIP: float = 0.85 # If similarity score is above this, skip verifier in simple RAG
 
     # динамически подставим суффикс по провайдеру,
     # если путь не задан через .env

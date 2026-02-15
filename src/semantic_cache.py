@@ -1,8 +1,14 @@
-import os
+from __future__ import annotations
+
 import json
+import logging
+import os
+from typing import List, Optional
+
 import numpy as np
-from typing import Optional, List
 from sentence_transformers import SentenceTransformer
+
+logger = logging.getLogger(__name__)
 
 
 class SemanticCache:
@@ -26,7 +32,7 @@ class SemanticCache:
         try:
             self.model = SentenceTransformer(self.model_name)
         except Exception as e:
-            print(f"Warning: Failed to load SentenceTransformer model: {e}")
+            logger.warning("Failed to load SentenceTransformer model: %s", e)
             self.model = None
 
         # Load cache from disk
@@ -41,7 +47,7 @@ class SemanticCache:
                     self.embeddings = data.get("embeddings", [])
                     self.answers = data.get("answers", [])
             except Exception as e:
-                print(f"Failed to load cache: {e}")
+                logger.error("Failed to load cache: %s", e)
 
     def save(self):
         """Save cache to disk."""
@@ -54,7 +60,7 @@ class SemanticCache:
             with open(self.cache_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"Failed to save cache: {e}")
+            logger.error("Failed to save cache: %s", e)
 
     def get(self, query: str) -> Optional[str]:
         if not self.sentences or not self.model:
@@ -90,7 +96,7 @@ class SemanticCache:
                 return self.answers[best_idx]
 
         except Exception as e:
-            print(f"Error in semantic cache get: {e}")
+            logger.error("Error in semantic cache get: %s", e)
             return None
 
         return None
@@ -116,4 +122,4 @@ class SemanticCache:
 
             self.save()
         except Exception as e:
-            print(f"Error adding to semantic cache: {e}")
+            logger.error("Error adding to semantic cache: %s", e)

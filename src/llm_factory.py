@@ -17,12 +17,13 @@ except ImportError:
     AutomaticFunctionCallingConfig = None
 
 
-def _create_openai_llm():
+def _create_openai_llm(**kwargs):
     return ChatOpenAI(
         model=settings.MODEL_NAME,
         temperature=settings.TEMPERATURE,
         timeout=settings.REQUEST_TIMEOUT,
         max_retries=3,
+        **kwargs,
     )
 
 
@@ -31,7 +32,7 @@ _LLM_PROVIDERS = {
 }
 
 
-def get_llm():
+def get_llm(**kwargs):
     """Create LLM instance based on LLM_PROVIDER setting."""
     provider = settings.LLM_PROVIDER.lower()
     factory = _LLM_PROVIDERS.get(provider)
@@ -40,7 +41,7 @@ def get_llm():
         raise ValueError(
             f"Неизвестный провайдер LLM: {provider}. Доступные: {available}"
         )
-    return factory()
+    return factory(**kwargs)
 
 
 def get_gemini_llm(
