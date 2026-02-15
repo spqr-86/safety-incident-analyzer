@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     # RAG node specific settings
     MIN_CHUNK_LENGTH_FOR_FILTERING: int = 50 # Minimum length for a chunk to be considered relevant after filtering
     SIMILARITY_THRESHOLD_ACCEPTANCE: float = 0.10  # Minimum similarity to consider results found (max across all results)
+    MAX_CHUNKS_FOR_LLM: int = 10  # Maximum chunks passed to LLM context
     SIMILARITY_THRESHOLD_FOR_VERIFIER_SKIP: float = 0.85 # If similarity score is above this, skip verifier in simple RAG
 
     # динамически подставим суффикс по провайдеру,

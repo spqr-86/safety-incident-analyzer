@@ -470,6 +470,16 @@ class MultiAgentRAGWorkflow:
             return 0.0
         return max(r.get("similarity", 0.0) or 0.0 for r in results)
 
+    @staticmethod
+    def _rank_and_limit_chunks(chunks: list[ChunkInfo], limit: int) -> list[ChunkInfo]:
+        """Sort chunks by similarity (descending) and limit count for LLM context."""
+        sorted_chunks = sorted(
+            chunks,
+            key=lambda c: c.get("similarity", 0.0) or 0.0,
+            reverse=True,
+        )
+        return sorted_chunks[:limit]
+
     # --- Node implementations ---
 
     def _router_node(self, state: RAGState) -> dict:
@@ -561,15 +571,18 @@ class MultiAgentRAGWorkflow:
                     "rag_status": RAGStatus.NOT_FOUND,
                 }
         
+        # --- Rank and limit chunks ---
+        results = self._rank_and_limit_chunks(results, settings.MAX_CHUNKS_FOR_LLM)
+
         # --- Visual proof ---
         chunks = _process_visual_proof(results, visual_proof_tool, writer)
-        
+
         # --- Generate answer ---
         writer({"status": "📝 Формирую ответ..."})
         draft = self.rag_llm.invoke(
             [HumanMessage(content=self._build_rag_simple_context(state, chunks))]
         )
-        
+
         return {
             "chunks_found": chunks,
             "searches_performed": searches,
@@ -632,12 +645,16 @@ class MultiAgentRAGWorkflow:
                 else:
                     writer({"status": f"❌ [{i}/{total}] Данные не обнаружены"})
         
+        # --- Rank and limit chunks ---
+        if all_chunks:
+            all_chunks = self._rank_and_limit_chunks(all_chunks, settings.MAX_CHUNKS_FOR_LLM)
+
         # --- Visual proof ---
         if all_chunks:
             chunks = _process_visual_proof(all_chunks, visual_proof_tool, writer)
         else:
             chunks = []
-        
+
         # --- Filtering ---
         if chunks:
             writer({"status": "🔬 Фильтрую нерелевантное..."})
