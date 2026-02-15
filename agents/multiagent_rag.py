@@ -117,17 +117,16 @@ def _expand_query(query: str) -> str:
 # --- Helper for visual proof processing ---
 def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list[dict]:
     """
-    Обрабатывает visual proof для списка чанков.
+    Обрабатывает visual proof для первых N чанков, возвращает ВСЕ чанки.
     Отправляет статусы через writer.
     """
-    processed_chunks = []
-    for i, chunk in enumerate(chunks[:settings.MAX_VISUAL_PROOFS]):  # Process top N chunks
+    for i, chunk in enumerate(chunks[:settings.MAX_VISUAL_PROOFS]):
         # Check for metadata first, then use heuristic
         needs_analyze = (
             chunk.get("metadata", {}).get("needs_visual_analyze")
             or detect_incomplete_chunk(chunk["content"])
         )
-        
+
         # Default values
         chunk["visual_proof_mode"] = "none"
         chunk["image_path"] = None
@@ -138,13 +137,10 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
         bbox = chunk.get("bbox")
 
         if not all([file_name, page_no, bbox]):
-            # Cannot perform visual proof without complete metadata
             writer({"status": f"⚠️ Фрагмент {i+1}: неполные метаданные для визуальной проверки"})
-            processed_chunks.append(chunk)
             continue
 
         if needs_analyze:
-            # Determine the reason for analysis (can be expanded)
             reason_labels = {
                 "table_fragment": "содержит таблицу",
                 "incomplete_sentence": "обрезан",
@@ -152,7 +148,6 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
                 "continuation_marker": "маркер продолжения",
                 "header_only": "только заголовок",
             }
-            # For now, just indicate it's incomplete if heuristic detected it
             label = "неполный" if detect_incomplete_chunk(chunk["content"]) else "анализ"
             if chunk.get("metadata", {}).get("reasons"):
                 label = reason_labels.get(chunk["metadata"]["reasons"][0], label)
@@ -165,10 +160,10 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
                 "mode": "analyze"
             })
             extracted_text = extract_text(vp_result).replace("[Visual Analysis Result]\n", "").strip()
-            chunk["content"] = extracted_text # Update chunk content with VLM result
-            chunk["visual_text"] = extracted_text # Store VLM result separately as well
+            chunk["content"] = extracted_text
+            chunk["visual_text"] = extracted_text
             chunk["visual_proof_mode"] = "analyze"
-            chunk["image_path"] = f"Visual analysis for {file_name} page {page_no}" # Placeholder for image path for analyze mode
+            chunk["image_path"] = f"Visual analysis for {file_name} page {page_no}"
             writer({"status": "🖼️ Текст извлечён из изображения"})
         else:
             writer({"status": f"✅ Фрагмент {i+1} полный"})
@@ -179,11 +174,9 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
                 "mode": "show"
             })
             chunk["visual_proof_mode"] = "show"
-            chunk["image_path"] = extract_text(vp_result) # Actual image path
-        
-        processed_chunks.append(chunk)
-    
-    return processed_chunks
+            chunk["image_path"] = extract_text(vp_result)
+
+    return chunks
 
 # --- State ---
 class RAGState(TypedDict):
