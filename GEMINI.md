@@ -90,7 +90,7 @@ pytest
 | 1 | `nlp_core` | ✅ Done | `feature/v7-migration-stage1` |
 | 2 | `hard_gates` | ✅ Done | `feature/v7-migration-stage1` |
 | 3 | `nodes/*` | ✅ Done | `feature/v7-migration-stage1` |
-| 4 | `graph.py` | Pending | — |
+| 4 | `graph.py` | ✅ Done | `feature/v7-migration-stage1` |
 | 5 | Миграция + cleanup | Pending | — |
 
 ## Как продолжить ("продолжи миграцию v7")

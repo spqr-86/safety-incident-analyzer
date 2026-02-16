@@ -1,6 +1,7 @@
 """RAG Pipeline v7 — modular implementation."""
 
 from src.v7.config import V7Config, v7_config
+from src.v7.graph import build_graph
 from src.v7.state_types import (
     ALLOWED_FILTER_KEYS,
     MAX_VERIFY_ITERATIONS,
@@ -17,6 +18,7 @@ from src.v7.state_types import (
 
 __all__ = [
     "ALLOWED_FILTER_KEYS",
+    "build_graph",
     "HardGateResult",
     "Intent",
     "MAX_VERIFY_ITERATIONS",
