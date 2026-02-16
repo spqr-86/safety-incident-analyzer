@@ -96,7 +96,7 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 | 0 | `state_types` + `config_v7` | ✅ Done | `feature/v7-migration-stage0` |
 | 1 | `nlp_core` | ✅ Done | `feature/v7-migration-stage1` |
 | 2 | `hard_gates` | ✅ Done | `feature/v7-migration-stage1` |
-| 3 | `nodes/*` | Pending | — |
+| 3 | `nodes/*` | ✅ Done | `feature/v7-migration-stage1` |
 | 4 | `graph.py` | Pending | — |
 | 5 | Миграция + cleanup | Pending | — |
 
