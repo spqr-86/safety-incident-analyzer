@@ -71,6 +71,9 @@ class Settings(BaseSettings):
         0.85  # If similarity score is above this, skip verifier in simple RAG
     )
 
+    # V7 graph toggle
+    USE_V7_GRAPH: bool = False
+
     # динамически подставим суффикс по провайдеру,
     # если путь не задан через .env
     def model_post_init(self, __context) -> None:
