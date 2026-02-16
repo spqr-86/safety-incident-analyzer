@@ -136,5 +136,31 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 - **Visual Proof:** The system extracts images from PDFs (`static/visuals/`) to prove answers.
 - **Search Optimization:** Agent search bypasses FlashRank reranking for speed (k=10). BM25 index is cached.
 
-## 4. Cursor / Copilot Rules
+## 4. Active Work: V7 Migration
+
+**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md` и `AGENTS.md`. При обновлении одного — обнови второй.
+
+**Design:** `docs/plans/2026-02-16-v7-migration-design.md` — полная архитектура, модули, roadmap, инструкции для агента (секция 7).
+**Spec:** `docs/feature/migration-v7` — исходная спецификация v7 (1729 строк, все типы и функции).
+**Plan example:** `docs/plans/2026-02-16-v7-stage0-implementation.md` — пример формата плана для этапа.
+
+### Прогресс
+| Этап | Модуль | Статус | Ветка |
+|------|--------|--------|-------|
+| 0 | `state_types` + `config_v7` | ✅ Done | `feature/v7-migration-stage0` |
+| 1 | `nlp_core` | Pending | — |
+| 2 | `hard_gates` | Pending | — |
+| 3 | `nodes/*` | Pending | — |
+| 4 | `graph.py` | Pending | — |
+| 5 | Миграция + cleanup | Pending | — |
+
+### Как продолжить ("продолжи миграцию v7")
+1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
+2. Найди первый Pending этап в таблице выше
+3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
+4. Создай implementation plan через `superpowers:writing-plans`
+5. Реализуй через `superpowers:subagent-driven-development`
+6. Обнови таблицу прогресса **в обоих файлах**: `CLAUDE.md` и `AGENTS.md`
+
+## 5. Cursor / Copilot Rules
 *No specific .cursorrules or .github/copilot-instructions.md found. Adhere to the guidelines above.*

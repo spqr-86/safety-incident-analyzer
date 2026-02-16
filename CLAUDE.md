@@ -95,9 +95,12 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 | 4 | `graph.py` | Pending | — |
 | 5 | Миграция + cleanup | Pending | — |
 
-### Как продолжить следующий этап
+### Как продолжить ("продолжи миграцию v7")
 1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
-2. Создай ветку `feature/v7-migration-stageN`
-3. Используй `superpowers:writing-plans` для создания implementation plan
-4. Реализуй через `superpowers:subagent-driven-development`
-5. Обнови таблицу прогресса в этом файле
+2. Найди первый Pending этап в таблице выше
+3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
+4. Создай implementation plan через `superpowers:writing-plans`
+5. Реализуй через `superpowers:subagent-driven-development`
+6. Обнови таблицу прогресса **в обоих файлах**: `CLAUDE.md` и `AGENTS.md`
+
+**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md` и `AGENTS.md`. При обновлении одного — обнови второй.
