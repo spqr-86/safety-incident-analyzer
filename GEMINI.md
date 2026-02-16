@@ -6,7 +6,7 @@ The core technologies used are:
 - **Python 3.11+**
 - **Streamlit** for the user interface.
 - **LangChain** and **LangGraph** for the LLM framework.
-- **OpenAI (GPT-4o)** and **Google Gemini 3** as LLM providers.
+- **Google Gemini 3** as LLM provider.
 - **ChromaDB** as the vector store.
 - **Docling** for ETL (Extract, Transform, Load).
 - **FlashRank** for reranking.
@@ -26,15 +26,17 @@ The system features a hybrid search combining semantic (vector) and keyword-base
 ```bash
 git clone https://github.com/spqr-86/safety-incident-analyzer.git
 cd safety-incident-analyzer
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+**Rule:** Always use the virtual environment (`venv`) for all Python commands. Never install packages globally.
 
 **2. Configure the environment:**
 Create a `.env` file in the project root (you can use `.env.example` as a template):
 ```env
 # LLM Provider
-LLM_PROVIDER=openai
-OPENAI_API_KEY=your_key
+LLM_PROVIDER=gemini
 GEMINI_API_KEY=your_gemini_key
 
 # Embeddings
@@ -65,4 +67,32 @@ pytest
 - **Linting:** **Ruff** is used for linting, checking for errors (E), fatal errors (F), and warnings (W). The E501 error (line too long) is ignored as it is handled by Black.
 - **Testing:** The project uses **pytest** for testing. Tests are located in the `tests/` directory and follow the `test_*.py` naming convention. `unittest.mock` is used for mocking dependencies.
 - **Prompt Management:** Prompts are managed using Jinja2 templates stored in the `prompts/` directory. A `registry.yaml` file in the same directory controls the active versions of the prompts.
+- **Commits:** Do NOT add `Co-Authored-By` lines. Run `black . && ruff check . --fix` before committing.
 - **Architecture:** The project follows a multi-agent RAG architecture orchestrated by LangGraph. The core logic is located in the `src/` and `agents/` directories. The configuration is managed in the `config/` directory. Detailed documentation about the architecture can be found in `docs/architecture/README.md`.
+
+# Active Work: V7 Migration
+
+**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`. При обновлении одного — обнови остальные два.
+
+**Design:** `docs/plans/2026-02-16-v7-migration-design.md` — полная архитектура, модули, roadmap, инструкции для агента (секция 7).
+**Spec:** `docs/feature/migration-v7` — исходная спецификация v7 (1729 строк, все типы и функции).
+**Plan example:** `docs/plans/2026-02-16-v7-stage0-implementation.md` — пример формата плана для этапа.
+
+## Прогресс
+| Этап | Модуль | Статус | Ветка |
+|------|--------|--------|-------|
+| 0 | `state_types` + `config_v7` | ✅ Done | `feature/v7-migration-stage0` |
+| 1 | `nlp_core` | ✅ Done | `feature/v7-migration-stage1` |
+| 2 | `hard_gates` | Pending | — |
+| 3 | `nodes/*` | Pending | — |
+| 4 | `graph.py` | Pending | — |
+| 5 | Миграция + cleanup | Pending | — |
+
+## Как продолжить ("продолжи миграцию v7")
+1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
+2. Найди первый Pending этап в таблице выше
+3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
+4. Создай implementation plan
+5. Реализуй
+6. Прогони E2E smoke test: `python scripts/verify_ux.py` (удаляет кэш, запускает вопрос через полный пайплайн)
+7. Обнови таблицу прогресса **во всех трёх файлах**: `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`

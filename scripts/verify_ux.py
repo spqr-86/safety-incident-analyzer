@@ -1,5 +1,16 @@
-import asyncio
+"""
+End-to-end smoke test: удаляет семантический кэш и прогоняет вопрос
+через MultiAgentRAGWorkflow с реальными ChromaDB, retriever и LLM.
+
+Использование:
+    python scripts/verify_ux.py                          # вопрос по умолчанию
+    python scripts/verify_ux.py "какой срок хранения нарядов-допусков?"
+    python scripts/verify_ux.py --keep-cache "вопрос"    # не удалять кэш
+"""
+
+import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -15,14 +26,36 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
-QUERY = "для кого проводится повторный инструктаж?"
+DEFAULT_QUERY = "для кого проводится повторный инструктаж?"
 LLM_PROVIDER = "gemini"
-EMBEDDING_PROVIDER = settings.EMBEDDING_PROVIDER
+CACHE_FILE = "semantic_cache.json"
 # ---
 
 
-async def main():
+def clear_cache():
+    """Удаляет семантический кэш, чтобы ответ шёл через полный пайплайн."""
+    cache_path = Path(CACHE_FILE)
+    if cache_path.exists():
+        cache_path.unlink()
+        logger.info(f"Кэш {CACHE_FILE} удалён.")
+    else:
+        logger.info(f"Кэш {CACHE_FILE} не найден, пропускаем.")
+
+
+def main():
     """Initializes and runs the RAG workflow, printing timing for each event."""
+    parser = argparse.ArgumentParser(description="E2E smoke test для RAG workflow")
+    parser.add_argument("query", nargs="?", default=DEFAULT_QUERY, help="Вопрос для тестирования")
+    parser.add_argument("--keep-cache", action="store_true", help="Не удалять семантический кэш")
+    args = parser.parse_args()
+
+    query = args.query
+
+    # 1. Удаляем кэш
+    if not args.keep_cache:
+        clear_cache()
+
+    # 2. Инициализация
     logger.info("Инициализация Chroma Vector Store...")
     try:
         vs = load_vector_store()
@@ -36,40 +69,40 @@ async def main():
     workflow = MultiAgentRAGWorkflow(retriever=retriever, llm_provider=LLM_PROVIDER)
     logger.info("Воркфлоу готов.")
 
-    logger.info(f"--- ЗАПУСК ПРОЦЕССА ДЛЯ ВОПРОСА: '{QUERY}' ---")
+    # 3. Запуск
+    logger.info(f"--- ЗАПУСК: '{query}' ---")
     start_time = time.time()
+    final_answer = None
 
     try:
-        for event in workflow.stream_events(QUERY):
-            current_time = time.time()
-            elapsed = current_time - start_time
-            print(f"[{elapsed:.2f}s] Event: {event}")
+        for event in workflow.stream_events(query):
+            elapsed = time.time() - start_time
+            event_type = event.get("type", "unknown")
+
+            if event_type == "status":
+                print(f"  [{elapsed:6.2f}s] 📡 {event.get('text', '')}")
+            elif event_type == "final":
+                final_answer = event.get("answer", "")
+                chunks = event.get("chunks_found", [])
+                images = event.get("image_paths", [])
+                print(f"  [{elapsed:6.2f}s] ✅ Финальный ответ получен")
+                print(f"           Чанков: {len(chunks)}, Изображений: {len(images)}")
+            else:
+                print(f"  [{elapsed:6.2f}s] ❓ {event}")
 
     except Exception as e:
-        logger.error(f"Произошла ошибка во время выполнения: {e}", exc_info=True)
+        logger.error(f"Ошибка во время выполнения: {e}", exc_info=True)
 
-    finally:
-        total_time = time.time() - start_time
-        logger.info(f"--- ПРОЦЕСС ЗАВЕРШЕН ЗА {total_time:.2f}s ---")
+    total_time = time.time() - start_time
+    print(f"\n{'='*60}")
+    print(f"Время: {total_time:.2f}s")
+    print(f"{'='*60}")
+
+    if final_answer:
+        print(f"\n📋 ОТВЕТ:\n{final_answer}")
+    else:
+        print("\n⚠️  Финальный ответ не получен!")
 
 
 if __name__ == "__main__":
-    # On Windows, we need to set a different event loop policy
-    if sys.platform == "win32":
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    # In Python 3.7+, asyncio.run is available and preferred.
-    # For simplicity and compatibility, we'll just run the async main function.
-    # This might require `await main()` if running in an already async environment.
-    try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        # This can happen if an event loop is already running (e.g., in Jupyter)
-        # In that case, we just await it.
-        if "cannot run loop while another loop is running" in str(e):
-            # This is a bit of a hack for script execution.
-            # A more robust solution would be needed for library use.
-            loop = asyncio.get_event_loop()
-            loop.run_until_complete(main())
-        else:
-            raise
+    main()

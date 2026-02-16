@@ -10,6 +10,21 @@ from __future__ import annotations
 
 import operator
 from typing import Annotated, List, Literal, TypedDict
+from dataclasses import dataclass
+
+# ─── Data Classes ──────────────────────────────────────────────────────────
+
+@dataclass
+class Doc:
+    """Represents a document with its text and metadata."""
+    id: str
+    text: str
+    metadata: dict
+
+@dataclass
+class ScoredDoc(Doc):
+    """Represents a document with an associated score."""
+    score: float
 
 # ─── Literal type aliases ────────────────────────────────────────────────────
 

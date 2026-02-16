@@ -108,7 +108,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 - Use specific exception types (e.g., `ValueError`, `ConnectionError`) rather than bare `Exception`.
 - **LLM/API Calls:** Wrap external calls in `try...except` blocks. Log errors using the project's logger.
   ```python
-  from utils.logging import logger
+  from src.utils import logger
   try:
       response = llm.invoke(...)
   except Exception as e:
@@ -121,7 +121,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 ### Core Components
 - **Frameworks:** LangChain, LangGraph, Streamlit.
 - **RAG Approaches:**
-  1.  **Multi-Agent RAG (`agents/multiagent_rag.py`):** Primary. Uses `Router Agent` (LLM), ReAct agent with Parallel Search, and Smart Verifier.
+  1.  **Multi-Agent RAG (`agents/multiagent_rag.py`):** Primary. Uses deterministic regex router (no LLM), ReAct agent with search tools, and Smart Verifier.
   2.  **Simple RAG (`src/final_chain.py`):** Legacy fallback.
 - **Vector Store:** ChromaDB with token-aware batching (`src/vector_store.py`).
 - **LLM Factory:** `src/llm_factory.py` unifies provider access (OpenAI, Gemini).
@@ -138,7 +138,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 
 ## 4. Active Work: V7 Migration
 
-**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md` и `AGENTS.md`. При обновлении одного — обнови второй.
+**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`. При обновлении одного — обнови остальные два.
 
 **Design:** `docs/plans/2026-02-16-v7-migration-design.md` — полная архитектура, модули, roadmap, инструкции для агента (секция 7).
 **Spec:** `docs/feature/migration-v7` — исходная спецификация v7 (1729 строк, все типы и функции).
@@ -148,7 +148,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 | Этап | Модуль | Статус | Ветка |
 |------|--------|--------|-------|
 | 0 | `state_types` + `config_v7` | ✅ Done | `feature/v7-migration-stage0` |
-| 1 | `nlp_core` | Pending | — |
+| 1 | `nlp_core` | ✅ Done | `feature/v7-migration-stage1` |
 | 2 | `hard_gates` | Pending | — |
 | 3 | `nodes/*` | Pending | — |
 | 4 | `graph.py` | Pending | — |
@@ -160,7 +160,8 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
 4. Создай implementation plan через `superpowers:writing-plans`
 5. Реализуй через `superpowers:subagent-driven-development`
-6. Обнови таблицу прогресса **в обоих файлах**: `CLAUDE.md` и `AGENTS.md`
+6. Прогони E2E smoke test: `python scripts/verify_ux.py` (удаляет кэш, запускает вопрос через полный пайплайн)
+7. Обнови таблицу прогресса **во всех трёх файлах**: `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`
 
 ## 5. Cursor / Copilot Rules
 *No specific .cursorrules or .github/copilot-instructions.md found. Adhere to the guidelines above.*

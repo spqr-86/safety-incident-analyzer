@@ -89,7 +89,7 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 | Этап | Модуль | Статус | Ветка |
 |------|--------|--------|-------|
 | 0 | `state_types` + `config_v7` | ✅ Done | `feature/v7-migration-stage0` |
-| 1 | `nlp_core` | Pending | — |
+| 1 | `nlp_core` | ✅ Done | `feature/v7-migration-stage1` |
 | 2 | `hard_gates` | Pending | — |
 | 3 | `nodes/*` | Pending | — |
 | 4 | `graph.py` | Pending | — |
@@ -101,6 +101,7 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
 4. Создай implementation plan через `superpowers:writing-plans`
 5. Реализуй через `superpowers:subagent-driven-development`
-6. Обнови таблицу прогресса **в обоих файлах**: `CLAUDE.md` и `AGENTS.md`
+6. Прогони E2E smoke test: `python scripts/verify_ux.py` (удаляет кэш, запускает вопрос через полный пайплайн)
+7. Обнови таблицу прогресса **во всех трёх файлах**: `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`
 
-**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md` и `AGENTS.md`. При обновлении одного — обнови второй.
+**Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`. При обновлении одного — обнови остальные два.
