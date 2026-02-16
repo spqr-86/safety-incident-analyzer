@@ -1,121 +1,334 @@
-# src/v7/nlp_core.py
-# V7 Migration — Stage 1: NLP Core
+"""V7 RAG pipeline — NLP utilities.
 
-from typing import List
+Lemmatization, BM25 index, RRF merge, MMR select.
+
+Libraries (per design 5.5 — no reinventing):
+- pymorphy3: morphological analysis / lemmatization
+- razdel: Russian tokenization
+- rank_bm25: BM25Okapi implementation
+
+Source spec: docs/feature/migration-v7 (lines 350-779).
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from typing import List, Optional
+
 import pymorphy3
-import razdel
+from razdel import tokenize as razdel_tokenize
 from rank_bm25 import BM25Okapi
-import numpy as np
-import re
 
-from src.v7.state_types import Doc, ScoredDoc
+from src.v7.config import v7_config
+
+# ─── Singleton morph analyzer ──────────────────────────────────────────────
+
+_morph = pymorphy3.MorphAnalyzer()
+
+# ─── Stop words (frozenset for O(1) lookups) ──────────────────────────────
+
+STOP_WORDS: frozenset[str] = frozenset(
+    {
+        "для",
+        "при",
+        "что",
+        "как",
+        "или",
+        "это",
+        "все",
+        "его",
+        "они",
+        "она",
+        "быть",
+        "было",
+        "будет",
+        "также",
+        "уже",
+        "так",
+        "если",
+        "только",
+        "может",
+        "нет",
+        "без",
+        "над",
+        "под",
+        "между",
+        "через",
+        "после",
+        "перед",
+        "более",
+        "менее",
+        "очень",
+        "который",
+        "должен",
+        "требование",
+        "соответствие",
+        "согласно",
+        "мочь",
+    }
+)
 
 
-# Placeholder for stop words, will be replaced with a more robust list
-RUSSIAN_STOP_WORDS = [
-    "и", "в", "во", "не", "что", "он", "на", "я", "с", "со", "как", "а", "то",
-    "все", "она", "так", "его", "но", "да", "ты", "к", "у", "же", "вы", "за",
-    "бы", "по", "только", "ее", "мне", "было", "вот", "от", "меня", "еще",
-    "нет", "о", "из", "ему", "теперь", "когда", "даже", "ну", "вдруг", "ли",
-    "если", "уже", "или", "ни", "быть", "был", "него", "до", "вас", "нибудь",
-    "опять", "уж", "вам", "ведь", "там", "потом", "себя", "ничего", "ей",
-    "может", "они", "тут", "где", "есть", "надо", "ней", "для", "мы", "тебя",
-    "их", "чем", "была", "сам", "чтоб", "без", "будто", "чего", "раз", "тоже",
-    "себе", "под", "будет", "ж", "тогда", "кто", "этот", "того", "потому",
-    "этого", "какой", "совсем", "ним", "здесь", "этом", "один", "почти",
-    "мой", "тем", "чтобы", "нее", "сейчас", "были", "куда", "зачем", "всех",
-    "никогда", "можно", "при", "наконец", "два", "об", "другой", "хоть",
-]
+# ─── extract_keywords ─────────────────────────────────────────────────────
 
-morph = pymorphy3.MorphAnalyzer()
 
-import re
+def extract_keywords(text: str) -> set[str]:
+    """Ключевые слова для keyword overlap check.
 
-# ... (imports) ...
+    pymorphy3 лемматизация + razdel токенизация.
+    Сохраняет номера нормативных документов (СП 1.13130, ГОСТ 12.1.004).
+    """
+    # Извлечь номера документов ДО лемматизации
+    doc_numbers = set(re.findall(r"\d+(?:\.\d+)+(?:-\d+)?", text))
 
-def extract_keywords(text: str) -> List[str]:
-    """Extracts and lemmatizes keywords from Russian text."""
-    # Remove punctuation and convert to lower case
-    text = re.sub(r'[^\w\s]', '', text.lower())
-    tokens = [token.text for token in razdel.tokenize(text)]
-    lemmatized_tokens = []
-    for token in tokens:
-        parsed_token = morph.parse(token)[0]
-        if parsed_token.normal_form not in RUSSIAN_STOP_WORDS and parsed_token.tag.POS not in {"PREP", "CONJ", "PRCL", "INTJ"}:
-            lemmatized_tokens.append(parsed_token.normal_form)
-    return list(set(lemmatized_tokens))
+    lemmas: set[str] = set()
+    for token in razdel_tokenize(text):
+        word = token.text.lower()
+        if len(word) < 3 or not re.match(r"[а-яёa-z]", word):
+            continue
+        parsed = _morph.parse(word)
+        lemma = parsed[0].normal_form if parsed else word
+        if lemma not in STOP_WORDS:
+            lemmas.add(lemma)
+
+    return lemmas | doc_numbers
+
+
+# ─── compute_keyword_overlap ──────────────────────────────────────────────
+
+
+def compute_keyword_overlap(query: str, passages: List[dict]) -> float:
+    """Доля ключевых слов запроса, найденных в passages (0.0–1.0)."""
+    query_kw = extract_keywords(query)
+    if not query_kw:
+        return 1.0
+    passage_text = " ".join(p.get("text", "") for p in passages)
+    passage_kw = extract_keywords(passage_text)
+    return len(query_kw & passage_kw) / len(query_kw)
+
+
+# ─── compute_doc_diversity ────────────────────────────────────────────────
+
+
+def compute_doc_diversity(passages: List[dict]) -> tuple[int, float]:
+    """(unique_doc_count, max_single_doc_ratio)."""
+    if not passages:
+        return 0, 1.0
+    doc_ids = [p.get("doc_id", "unknown") for p in passages]
+    counts = Counter(doc_ids)
+    return len(counts), counts.most_common(1)[0][1] / len(passages)
+
+
+# ─── BM25 ─────────────────────────────────────────────────────────────────
+
+
+def _lemmatize_for_bm25(text: str) -> List[str]:
+    """Токенизация + лемматизация для BM25 индекса и запросов."""
+    tokens = []
+    for token in razdel_tokenize(text):
+        word = token.text.lower()
+        if len(word) < 2 or not re.match(r"[а-яёa-z0-9]", word):
+            continue
+        parsed = _morph.parse(word)
+        lemma = parsed[0].normal_form if parsed else word
+        tokens.append(lemma)
+    return tokens
 
 
 class BM25Index:
-    """A wrapper for rank_bm25.BM25Okapi."""
-    def __init__(self):
-        self.bm25 = None
-        self.docs = []
+    """BM25 индекс поверх rank_bm25.BM25Okapi с pymorphy3 лемматизацией.
 
-    def build(self, docs: List[Doc]):
-        """Builds the BM25 index from a list of documents."""
-        self.docs = docs
-        tokenized_corpus = [extract_keywords(doc.text) for doc in docs]
-        self.bm25 = BM25Okapi(tokenized_corpus)
+    Usage:
+        index = BM25Index(passages)  # build once
+        results = index.search(query, top_k=12)
+    """
 
-    def query(self, tokens: List[str], top_k: int) -> List[ScoredDoc]:
-        """Queries the index and returns top_k scored documents."""
-        if self.bm25 is None:
+    def __init__(self, passages: List[dict]) -> None:
+        self._passages = passages
+        corpus = [_lemmatize_for_bm25(p.get("text", "")) for p in passages]
+        self._bm25 = BM25Okapi(corpus)
+
+    def search(
+        self,
+        query: str,
+        top_k: int = 12,
+        filters: Optional[dict] = None,
+    ) -> List[dict]:
+        tokens = _lemmatize_for_bm25(query)
+        if not tokens:
             return []
-        doc_scores = self.bm25.get_scores(tokens)
-        # Set scores of docs with no matching terms to a very small number
-        doc_scores = np.where(doc_scores == 0, -1e9, doc_scores)
-        top_indices = np.argsort(doc_scores)[::-1][:top_k]
-        
+        scores = self._bm25.get_scores(tokens)
+
+        candidates = []
+        for i, score in enumerate(scores):
+            p = self._passages[i]
+            if filters:
+                skip = False
+                for k, v in filters.items():
+                    if p.get(k) != v:
+                        skip = True
+                        break
+                if skip:
+                    continue
+            candidates.append((i, score))
+
+        candidates.sort(key=lambda x: x[1], reverse=True)
         results = []
-        for i in top_indices:
-            score = doc_scores[i]
-            original_doc = self.docs[i]
-            results.append(ScoredDoc(id=original_doc.id, text=original_doc.text, metadata=original_doc.metadata, score=score))
-        
+        for idx, score in candidates[:top_k]:
+            p = dict(self._passages[idx])
+            p["bm25_score"] = round(float(score), 4)
+            if "score" not in p:
+                p["score"] = p["bm25_score"]
+            results.append(p)
         return results
 
 
-def rrf_merge(rankings: List[List[ScoredDoc]], k: int = 60) -> List[ScoredDoc]:
-    """Merges multiple ranked lists of documents using Reciprocal Rank Fusion."""
-    if not rankings:
+# ─── Global BM25 index ───────────────────────────────────────────────────
+
+_bm25_index: Optional[BM25Index] = None
+
+
+def init_bm25_index(passages: List[dict]) -> None:
+    """Initialize global BM25 index. Call once at startup with full corpus."""
+    global _bm25_index
+    _bm25_index = BM25Index(passages)
+
+
+def bm25_search(
+    query: str,
+    filters: Optional[dict] = None,
+    top_k: int = 12,
+) -> List[dict]:
+    """BM25 full-text search с pymorphy3 лемматизацией.
+
+    Требует предварительной init_bm25_index() с корпусом.
+    """
+    if _bm25_index is not None:
+        return _bm25_index.search(query, top_k, filters)
+    return []
+
+
+# ─── RRF merge ────────────────────────────────────────────────────────────
+
+
+def rrf_merge(
+    *result_lists: List[dict],
+    top_k: int = 12,
+    k: int | None = None,
+) -> List[dict]:
+    """Reciprocal Rank Fusion — объединяет results из нескольких retriever-ов.
+
+    RRF score = Σ 1 / (k + rank_i) по всем спискам.
+    k=60 — стандартное значение (Cormack et al.).
+    Дедуп по chunk_id.
+    """
+    if k is None:
+        k = v7_config.RRF_K
+
+    chunk_scores: dict[str, float] = {}
+    chunk_map: dict[str, dict] = {}
+
+    for results in result_lists:
+        for rank, p in enumerate(results):
+            cid = p.get("chunk_id", f"unknown_{rank}")
+            rrf_score = 1.0 / (k + rank + 1)
+            chunk_scores[cid] = chunk_scores.get(cid, 0.0) + rrf_score
+            if cid not in chunk_map:
+                chunk_map[cid] = p
+
+    ranked = sorted(chunk_scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+    result = []
+    for cid, score in ranked:
+        p = dict(chunk_map[cid])
+        p["rrf_score"] = round(score, 5)
+        result.append(p)
+
+    return result
+
+
+# ─── MMR select (fallback only) ──────────────────────────────────────────
+
+
+def mmr_select(
+    passages: List[dict],
+    top_k: int,
+    lambda_param: float | None = None,
+) -> List[dict]:
+    """Maximal Marginal Relevance — FALLBACK ONLY.
+
+    В production основной MMR делает Chroma/Qdrant нативно.
+    Этот mmr_select используется ТОЛЬКО в merge_all_passages(),
+    где нет доступа к VectorDB (passages уже извлечены).
+
+    Diversity penalty на основе doc_id.
+    """
+    if lambda_param is None:
+        lambda_param = v7_config.MMR_LAMBDA
+
+    if len(passages) <= top_k:
+        return passages
+
+    selected: List[dict] = []
+    remaining = list(passages)
+    selected_doc_ids: Counter = Counter()
+
+    for _ in range(top_k):
+        best_idx = -1
+        best_mmr = -1.0
+
+        for i, p in enumerate(remaining):
+            relevance = p.get("score", 0.0)
+            doc_id = p.get("doc_id", "unknown")
+            doc_count = selected_doc_ids.get(doc_id, 0)
+            diversity_penalty = doc_count / max(len(selected), 1)
+            mmr_score = (
+                lambda_param * relevance - (1 - lambda_param) * diversity_penalty
+            )
+
+            if mmr_score > best_mmr:
+                best_mmr = mmr_score
+                best_idx = i
+
+        if best_idx < 0:
+            break
+
+        chosen = remaining.pop(best_idx)
+        selected.append(chosen)
+        selected_doc_ids[chosen.get("doc_id", "unknown")] += 1
+
+    return selected
+
+
+# ─── merge_all_passages ───────────────────────────────────────────────────
+
+
+def merge_all_passages(
+    attempts: List[dict],
+    top_k: int = 12,
+    mmr_lambda: float | None = None,
+) -> List[dict]:
+    """Merge уникальных passages из ВСЕХ retrieval attempts.
+
+    1. Собрать все passages из всех attempts.
+    2. Дедуп по chunk_id.
+    3. MMR-select top_k для diversity.
+    """
+    if mmr_lambda is None:
+        mmr_lambda = v7_config.MMR_LAMBDA
+
+    seen_chunks: set[str] = set()
+    all_passages: List[dict] = []
+
+    for attempt in attempts:
+        for p in attempt.get("passages", []):
+            cid = p.get("chunk_id", "")
+            if cid and cid in seen_chunks:
+                continue
+            seen_chunks.add(cid)
+            all_passages.append(p)
+
+    if not all_passages:
         return []
 
-    rrf_scores = {}
-    doc_map = {}
-
-    for ranking in rankings:
-        for rank, doc in enumerate(ranking, 1):
-            doc_map[doc.id] = doc
-            if doc.id not in rrf_scores:
-                rrf_scores[doc.id] = 0.0
-            rrf_scores[doc.id] += 1.0 / (k + rank)
-    
-    # Sort documents by their RRF score
-    sorted_doc_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)
-    
-    merged_results = []
-    for doc_id in sorted_doc_ids:
-        doc = doc_map[doc_id]
-        # Create a new ScoredDoc with the RRF score
-        merged_results.append(ScoredDoc(id=doc.id, text=doc.text, metadata=doc.metadata, score=rrf_scores[doc_id]))
-        
-    return merged_results
-
-def mmr_select(docs: List[Doc], query_emb: np.ndarray, lambda_: float, k: int) -> List[Doc]:
-    """
-    Selects a diverse subset of documents using Maximal Marginal Relevance (MMR).
-    Note: This is a placeholder implementation. A real implementation would require
-    document embeddings to be pre-calculated and passed in.
-    """
-    # This is a complex function to implement without pre-existing embeddings.
-    # For the purpose of this stage, we will return the first k documents.
-    # A proper implementation will be added in a later stage when embeddings are handled.
-    if not docs:
-        return []
-        
-    if len(docs) <= k:
-        return docs
-
-    return docs[:k]
-
+    return mmr_select(all_passages, top_k, mmr_lambda)

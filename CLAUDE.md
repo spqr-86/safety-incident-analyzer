@@ -85,6 +85,11 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 **Spec:** `docs/feature/migration-v7` — исходная спецификация v7 (1729 строк, все типы и функции).
 **Implementation plans:** `docs/plans/2026-02-16-v7-stage0-implementation.md` — пример формата плана для этапа.
 
+### Ключевые принципы v7 (секция 5 дизайн-документа)
+- **5.5 Не изобретать велосипед** — использовать библиотеки (`rank_bm25`, `pymorphy3`, `razdel`, `pydantic`), не писать свои реализации
+- **5.6 Строгий граф зависимостей** — `state_types ← config ← nlp_core ← hard_gates ← nodes ← graph`, обратных импортов нет
+- **5.7 Тонкие ноды** — ноды только оркестрируют (read state → call function → write state), вся логика в `nlp_core`/`hard_gates`
+
 ### Прогресс
 | Этап | Модуль | Статус | Ветка |
 |------|--------|--------|-------|
