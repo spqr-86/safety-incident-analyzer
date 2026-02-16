@@ -129,9 +129,11 @@ def parse_search_results(search_output: str) -> List[ChunkInfo]:
                 page_no=None,
                 bbox=None,
                 visual_text=None,
-            ))
+            )
+        )
 
     return chunks
+
 
 def detect_incomplete_chunk(text: str) -> bool:
     """
@@ -144,7 +146,11 @@ def detect_incomplete_chunk(text: str) -> bool:
 
     # Check for common continuation markers
     continuation_markers = [
-        "...", "продолжение следует", "см. далее", "таблица", "схема"
+        "...",
+        "продолжение следует",
+        "см. далее",
+        "таблица",
+        "схема",
     ]
     if any(marker in text.lower() for marker in continuation_markers):
         return True
@@ -152,10 +158,11 @@ def detect_incomplete_chunk(text: str) -> bool:
     # Check if it ends abruptly without punctuation
     if not re.search(r"[.?!;:]$", text) and len(text.split()) > 5:
         return True
-    
+
     # Check for bullet points or numbered lists that don't start at the beginning
-    if (re.search(r"^\s*[-*\d]+\s", text, re.MULTILINE) and 
-        not re.match(r"^\s*(1\.|-|\*)\s", text)):
+    if re.search(r"^\s*[-*\d]+\s", text, re.MULTILINE) and not re.match(
+        r"^\s*(1\.|-|\*)\s", text
+    ):
         return True
 
     return False

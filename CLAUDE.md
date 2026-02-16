@@ -77,3 +77,4 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 - **`index.py` is destructive**: Drops entire ChromaDB before reindexing.
 - **Config**: pydantic-settings in `config/settings.py`, copy `.env.example` → `.env`.
 - **Debugging**: `DEBUG_PROMPTS=true`, LangSmith traces (`LANGSMITH_TRACING_V2=true`), error reports in `analysis/error_reports/`.
+- **Commits**: Do NOT add `Co-Authored-By` lines. Run `black . && ruff check . --fix` before committing.

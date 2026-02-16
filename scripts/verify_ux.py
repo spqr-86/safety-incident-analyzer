@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import sys
@@ -20,6 +19,7 @@ QUERY = "для кого проводится повторный инструк�
 LLM_PROVIDER = "gemini"
 EMBEDDING_PROVIDER = settings.EMBEDDING_PROVIDER
 # ---
+
 
 async def main():
     """Initializes and runs the RAG workflow, printing timing for each event."""
@@ -57,7 +57,7 @@ if __name__ == "__main__":
     # On Windows, we need to set a different event loop policy
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
+
     # In Python 3.7+, asyncio.run is available and preferred.
     # For simplicity and compatibility, we'll just run the async main function.
     # This might require `await main()` if running in an already async environment.
@@ -73,4 +73,3 @@ if __name__ == "__main__":
             loop.run_until_complete(main())
         else:
             raise
-

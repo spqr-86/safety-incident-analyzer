@@ -1,7 +1,5 @@
 import os
-import re
 import sys
-import time
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -187,7 +185,7 @@ user_query = st.chat_input(
     "Спросите, например: «Какие требования к ширине эвакуационных путей?»"
 )
 if user_query:
-    answer = "" # Initialize answer to prevent NameError
+    answer = ""  # Initialize answer to prevent NameError
     # Показываем сообщение пользователя
     st.session_state.messages.append({"role": "user", "content": user_query})
     with st.chat_message("user"):
@@ -232,14 +230,14 @@ if user_query:
             # but will use final_answer and final_chunks.
 
             # Combine and deduplicate images
-            images_from_text = find_proof_images(final_answer) # Check for images mentioned in final answer content
+            images_from_text = find_proof_images(
+                final_answer
+            )  # Check for images mentioned in final answer content
             all_images = list(set(images_from_state + images_from_text))
 
             for img_path in all_images:
                 if os.path.exists(img_path):
-                    st.image(
-                        img_path, caption="Визуальное доказательство", width=600
-                    )
+                    st.image(img_path, caption="Визуальное доказательство", width=600)
 
             st.session_state.last_answer = final_answer
 
@@ -271,7 +269,7 @@ if user_query:
             else:
                 st.caption("Источники не найдены.")
 
-            answer = final_answer # Assign to answer for history
+            answer = final_answer  # Assign to answer for history
 
         else:
             # --- RAG MODE (Legacy) ---
