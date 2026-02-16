@@ -78,3 +78,26 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 - **Config**: pydantic-settings in `config/settings.py`, copy `.env.example` → `.env`.
 - **Debugging**: `DEBUG_PROMPTS=true`, LangSmith traces (`LANGSMITH_TRACING_V2=true`), error reports in `analysis/error_reports/`.
 - **Commits**: Do NOT add `Co-Authored-By` lines. Run `black . && ruff check . --fix` before committing.
+
+## Active Work: V7 Migration
+
+**Design:** `docs/plans/2026-02-16-v7-migration-design.md` — полная архитектура, модули, roadmap, инструкции для агента.
+**Spec:** `docs/feature/migration-v7` — исходная спецификация v7 (1729 строк, все типы и функции).
+**Implementation plans:** `docs/plans/2026-02-16-v7-stage0-implementation.md` — пример формата плана для этапа.
+
+### Прогресс
+| Этап | Модуль | Статус | Ветка |
+|------|--------|--------|-------|
+| 0 | `state_types` + `config_v7` | ✅ Done | `feature/v7-migration-stage0` |
+| 1 | `nlp_core` | Pending | — |
+| 2 | `hard_gates` | Pending | — |
+| 3 | `nodes/*` | Pending | — |
+| 4 | `graph.py` | Pending | — |
+| 5 | Миграция + cleanup | Pending | — |
+
+### Как продолжить следующий этап
+1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
+2. Создай ветку `feature/v7-migration-stageN`
+3. Используй `superpowers:writing-plans` для создания implementation plan
+4. Реализуй через `superpowers:subagent-driven-development`
+5. Обнови таблицу прогресса в этом файле

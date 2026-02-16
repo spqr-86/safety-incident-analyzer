@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 
-
 class TestV7ConfigDefaults:
     """Verify all default values match the design doc."""
 
