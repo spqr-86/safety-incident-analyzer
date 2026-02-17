@@ -31,7 +31,8 @@ def make_vector_search_fn(vector_store) -> Callable[..., List[dict]]:
         docs_and_scores = vector_store.similarity_search_with_score(query, k=top_k)
         results = []
         for doc, distance in docs_and_scores:
-            similarity = max(0.0, 1.0 - distance)
+            # ChromaDB returns L2 distance (0..inf). Convert to similarity (0..1).
+            similarity = 1.0 / (1.0 + distance)
             results.append(
                 {
                     "text": doc.page_content,

@@ -36,7 +36,8 @@ class TestMakeVectorSearchFn:
         assert len(result) == 1
         assert result[0]["text"] == "some text about safety"
         assert result[0]["metadata"]["source"] == "gost.pdf"
-        assert result[0]["score"] == pytest.approx(0.7, abs=0.01)
+        # L2 distance 0.3 → similarity = 1/(1+0.3) ≈ 0.7692
+        assert result[0]["score"] == pytest.approx(1.0 / 1.3, abs=0.01)
 
     @pytest.mark.unit
     def test_respects_top_k(self):
