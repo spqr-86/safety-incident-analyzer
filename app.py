@@ -25,6 +25,16 @@ except Exception as e:
     logger.warning(f"Multi-Agent RAG is not available: {e}")
     MAS_AVAILABLE = False
 
+# V7 Graph
+try:
+    from src.v7.bridge import init_v7_from_chroma
+    from src.v7.graph import build_graph as build_v7_graph
+
+    V7_AVAILABLE = True
+except Exception as e:
+    logger.warning(f"V7 Graph is not available: {e}")
+    V7_AVAILABLE = False
+
 # Индексация «по кнопке»
 try:
     import index as index_module  # index.py должен содержать main()
@@ -72,11 +82,21 @@ with right:
 with st.sidebar:
     st.subheader("⚙️ Режим работы")
 
+    # V7 toggle (feature-flagged)
+    if V7_AVAILABLE and settings.USE_V7_GRAPH:
+        v7_mode = st.toggle("🔬 V7 Graph (modular pipeline)", value=False)
+    else:
+        v7_mode = False
+
     # MAS toggle
     if MAS_AVAILABLE:
         mas_mode = st.toggle("🧠 Multi-Agent RAG (Router → RAG → Verifier)", value=True)
     else:
         st.info("Multi-Agent RAG недоступен.")
+        mas_mode = False
+
+    # Mutual exclusion: v7 overrides MAS
+    if v7_mode:
         mas_mode = False
 
     st.divider()
@@ -119,19 +139,20 @@ def load_resources():
     Грузим один раз:
       - гибридную RAG-цепочку (retriever + LLM)
       - Multi-Agent RAG Workflow
+      - V7 Graph (if enabled)
     """
     # Проверяем наличие БД
     if not os.path.exists(settings.CHROMA_DB_PATH) or not os.listdir(
         settings.CHROMA_DB_PATH
     ):
         st.error("База данных не найдена. Запустите 'python index.py' для её создания.")
-        return None, None, None
+        return None, None, None, None
 
     try:
         chain, retriever, agent_retriever = create_final_hybrid_chain()
     except Exception as e:
         st.error(f"Произошла ошибка при подготовке RAG-цепочки: {e}")
-        return None, None, None
+        return None, None, None, None
 
     # Multi-Agent RAG Workflow (использует OpenAI по умолчанию)
     agent = None
@@ -141,7 +162,19 @@ def load_resources():
         except Exception as e:
             logger.warning(f"Failed to init MultiAgentRAGWorkflow: {e}")
 
-    return (chain, retriever, agent)
+    # V7 Graph
+    v7_app = None
+    if V7_AVAILABLE and settings.USE_V7_GRAPH:
+        try:
+            from src.vector_store import load_vector_store
+
+            vector_store = load_vector_store()
+            init_v7_from_chroma(vector_store)
+            v7_app = build_v7_graph().compile()
+        except Exception as e:
+            logger.warning(f"Failed to init V7 Graph: {e}")
+
+    return (chain, retriever, agent, v7_app)
 
 
 loaded = load_resources()
@@ -149,7 +182,7 @@ if not loaded or loaded[0] is None:
     st.warning("Приложение не может быть запущено…")
     st.stop()
 
-rag_chain, hybrid_retriever, agent = loaded
+rag_chain, hybrid_retriever, agent, v7_app = loaded
 
 if mas_mode and agent is None:
     st.sidebar.warning(
@@ -193,7 +226,43 @@ if user_query:
 
     # Ветка ответа
     with st.chat_message("assistant"):
-        if mas_mode and agent:
+        if v7_mode and v7_app:
+            # --- V7 GRAPH MODE ---
+            with st.spinner("V7 pipeline..."):
+                result = v7_app.invoke({"query": user_query})
+
+            # Determine answer
+            if result.get("clarify_message"):
+                answer = result["clarify_message"]
+            elif result.get("abstain_reason"):
+                answer = result["abstain_reason"]
+            elif result.get("final_passages"):
+                passages = result["final_passages"]
+                texts = [p.get("text", "") for p in passages[:10]]
+                answer = (
+                    f"Найдено {len(passages)} релевантных фрагментов "
+                    f"(score: {result.get('final_score', 0):.3f}).\n\n"
+                    + "\n\n---\n\n".join(texts)
+                )
+                # Show sources
+                with st.expander(f"🔎 Источники ({len(passages)})", expanded=False):
+                    for i, p in enumerate(passages, 1):
+                        src = p.get("metadata", {}).get("source", "N/A")
+                        score = p.get("score", 0.0)
+                        preview = p.get("text", "")[:500].strip().replace("\n", " ")
+                        st.markdown(f"**{i}.** `{src}` · 🎯 {score:.2f}")
+                        st.code(preview, language="markdown")
+                        st.divider()
+            elif result.get("intent") == "noise":
+                answer = (
+                    "Это выглядит как приветствие. " "Задайте вопрос по охране труда."
+                )
+            else:
+                answer = "Не удалось получить ответ."
+
+            st.markdown(answer)
+
+        elif mas_mode and agent:
             # --- MULTI-AGENT RAG MODE ---
             status_container = st.empty()
             answer_container = st.empty()
