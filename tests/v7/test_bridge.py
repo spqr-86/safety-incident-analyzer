@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from unittest.mock import MagicMock, patch
 
-from src.v7.bridge import make_vector_search_fn, init_v7_from_chroma
+from src.v7.bridge import (
+    init_v7_from_chroma,
+    make_rewrite_fn,
+    make_vector_search_fn,
+    make_verify_fn,
+)
 
 
 class TestMakeVectorSearchFn:
@@ -57,6 +64,140 @@ class TestMakeVectorSearchFn:
         assert result == []
 
 
+class TestMakeVerifyFn:
+    @pytest.mark.unit
+    def test_returns_callable(self):
+        mock_llm = MagicMock()
+        fn = make_verify_fn(mock_llm)
+        assert callable(fn)
+
+    @pytest.mark.unit
+    def test_parses_json_response(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = json.dumps(
+            {
+                "verdict": "sufficient",
+                "reason": "Passages содержат нужные данные",
+                "rewrite_hint": "",
+                "missing_aspects": [],
+                "confidence": 0.92,
+            }
+        )
+        fn = make_verify_fn(mock_llm)
+        result = fn(
+            original_query="ГОСТ 12.1.005",
+            active_query="ГОСТ 12.1.005",
+            passages=[{"text": "some text", "score": 0.8}],
+        )
+        assert result["verdict"] == "sufficient"
+        assert result["confidence"] == 0.92
+        assert result["missing_aspects"] == []
+
+    @pytest.mark.unit
+    def test_returns_escalate_on_parse_error(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = "not json at all"
+        fn = make_verify_fn(mock_llm)
+        result = fn(
+            original_query="test",
+            active_query="test",
+            passages=[{"text": "t", "score": 0.5}],
+        )
+        assert result["verdict"] == "escalate"
+        assert result["confidence"] == 0.0
+
+    @pytest.mark.unit
+    def test_returns_escalate_on_llm_exception(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = RuntimeError("LLM unavailable")
+        fn = make_verify_fn(mock_llm)
+        result = fn(
+            original_query="test",
+            active_query="test",
+            passages=[],
+        )
+        assert result["verdict"] == "escalate"
+        assert result["confidence"] == 0.0
+
+    @pytest.mark.unit
+    def test_handles_gemini_style_content(self):
+        """Gemini returns content as list of dicts with 'text' key."""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = [
+            {"text": '{"verdict": "rewrite", "reason": "need more", "confidence": 0.6}'}
+        ]
+        fn = make_verify_fn(mock_llm)
+        result = fn(
+            original_query="test",
+            active_query="test",
+            passages=[{"text": "t", "score": 0.4}],
+        )
+        assert result["verdict"] == "rewrite"
+        assert result["confidence"] == 0.6
+
+
+class TestMakeRewriteFn:
+    @pytest.mark.unit
+    def test_returns_callable(self):
+        mock_llm = MagicMock()
+        fn = make_rewrite_fn(mock_llm)
+        assert callable(fn)
+
+    @pytest.mark.unit
+    def test_returns_rewritten_query(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = "требования ГОСТ 12.1.005 к ПДК"
+        fn = make_rewrite_fn(mock_llm)
+        result = fn(
+            original_query="ГОСТ 12.1.005 ПДК",
+            active_query="ГОСТ 12.1.005 ПДК",
+            rewrite_hint="уточни числовые нормы",
+            missing_aspects=["числовые требования"],
+        )
+        assert "ГОСТ 12.1.005" in result
+
+    @pytest.mark.unit
+    def test_preserves_doc_identifiers(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = "требования к высоте ограждений"
+        fn = make_rewrite_fn(mock_llm)
+        result = fn(
+            original_query="СП 1.13130 высота ограждений",
+            active_query="СП 1.13130 высота ограждений",
+            rewrite_hint="",
+            missing_aspects=[],
+        )
+        assert "СП 1.13130" in result
+
+    @pytest.mark.unit
+    def test_fallback_on_error(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = RuntimeError("LLM down")
+        fn = make_rewrite_fn(mock_llm)
+        result = fn(
+            original_query="ГОСТ 12.1.005",
+            active_query="ГОСТ 12.1.005",
+            rewrite_hint="уточни",
+            missing_aspects=["нормы"],
+        )
+        # Fallback returns original query with aspects
+        assert "ГОСТ 12.1.005" in result
+        assert "нормы" in result
+
+    @pytest.mark.unit
+    def test_fallback_on_empty_response(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = ""
+        fn = make_rewrite_fn(mock_llm)
+        result = fn(
+            original_query="СНиП 21-01",
+            active_query="СНиП 21-01",
+            rewrite_hint="",
+            missing_aspects=["пожарная безопасность"],
+        )
+        assert "СНиП 21-01" in result
+
+
 class TestInitV7FromChroma:
     @pytest.mark.unit
     @patch("src.v7.bridge.init_bm25_index")
@@ -68,7 +209,7 @@ class TestInitV7FromChroma:
             "documents": ["doc1 text", "doc2 text"],
             "metadatas": [{"source": "a.pdf"}, {"source": "b.pdf"}],
         }
-        init_v7_from_chroma(mock_store)
+        init_v7_from_chroma(mock_store, llm_provider=None)
         mock_simple.set_vector_search.assert_called_once()
         mock_complex.set_vector_search.assert_called_once()
         mock_bm25.assert_called_once()
@@ -83,8 +224,76 @@ class TestInitV7FromChroma:
             "documents": ["text A", "text B"],
             "metadatas": [{"source": "a.pdf"}, {"source": "b.pdf"}],
         }
-        init_v7_from_chroma(mock_store)
+        init_v7_from_chroma(mock_store, llm_provider=None)
         corpus = mock_bm25.call_args[0][0]
         assert len(corpus) == 2
         assert corpus[0]["text"] == "text A"
         assert corpus[1]["metadata"]["source"] == "b.pdf"
+
+    @pytest.mark.unit
+    @patch("src.v7.bridge.get_gemini_llm")
+    @patch("src.v7.bridge.llm_verifier_mod")
+    @patch("src.v7.bridge.rewriter_mod")
+    @patch("src.v7.bridge.init_bm25_index")
+    @patch("src.v7.bridge.rag_simple_mod")
+    @patch("src.v7.bridge.rag_complex_mod")
+    def test_injects_llm_fns_when_provider_set(
+        self,
+        mock_complex,
+        mock_simple,
+        mock_bm25,
+        mock_rewriter,
+        mock_verifier,
+        mock_get_llm,
+    ):
+        mock_store = MagicMock()
+        mock_store.get.return_value = {
+            "documents": ["d"],
+            "metadatas": [{"source": "a.pdf"}],
+        }
+        mock_get_llm.return_value = MagicMock()
+        init_v7_from_chroma(mock_store, llm_provider="gemini")
+        mock_verifier.set_verify_fn.assert_called_once()
+        mock_rewriter.set_rewrite_fn.assert_called_once()
+        assert mock_get_llm.call_count == 2
+
+    @pytest.mark.unit
+    @patch("src.v7.bridge.get_gemini_llm", side_effect=ImportError("no gemini"))
+    @patch("src.v7.bridge.llm_verifier_mod")
+    @patch("src.v7.bridge.rewriter_mod")
+    @patch("src.v7.bridge.init_bm25_index")
+    @patch("src.v7.bridge.rag_simple_mod")
+    @patch("src.v7.bridge.rag_complex_mod")
+    def test_falls_back_to_stubs_on_llm_error(
+        self,
+        mock_complex,
+        mock_simple,
+        mock_bm25,
+        mock_rewriter,
+        mock_verifier,
+        mock_get_llm,
+    ):
+        mock_store = MagicMock()
+        mock_store.get.return_value = {
+            "documents": ["d"],
+            "metadatas": [{"source": "a.pdf"}],
+        }
+        # Should not raise, just log warning
+        init_v7_from_chroma(mock_store, llm_provider="gemini")
+        mock_verifier.set_verify_fn.assert_not_called()
+        mock_rewriter.set_rewrite_fn.assert_not_called()
+
+    @pytest.mark.unit
+    @patch("src.v7.bridge.init_bm25_index")
+    @patch("src.v7.bridge.rag_simple_mod")
+    @patch("src.v7.bridge.rag_complex_mod")
+    def test_skips_llm_when_provider_none(self, mock_complex, mock_simple, mock_bm25):
+        mock_store = MagicMock()
+        mock_store.get.return_value = {
+            "documents": ["d"],
+            "metadatas": [{"source": "a.pdf"}],
+        }
+        # llm_provider=None should skip LLM injection entirely
+        init_v7_from_chroma(mock_store, llm_provider=None)
+        # No error, search still injected
+        mock_simple.set_vector_search.assert_called_once()

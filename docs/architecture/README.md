@@ -15,10 +15,11 @@
 
 ## ⚙️ Как это работает
 
-Система использует **LangGraph** для оркестрации агентов. Два подхода (выбираются в UI):
+Система использует **LangGraph** для оркестрации агентов. Три подхода (выбираются в UI):
 
 1. **Multi-Agent RAG** (`agents/multiagent_rag.py`) — основной подход с ReAct-агентами. Подробнее ниже.
-2. **Simple RAG Chain** (`src/final_chain.py`) — legacy fallback: гибридный поиск → FlashRank rerank → LLM.
+2. **V7 Pipeline** (`src/v7/`) — новый детерминированный RAG-граф: intent gate → router → hybrid retrieval → hard-gate triage → LLM verifier → rewriter. Bridge (`src/v7/bridge.py`) инжектит ChromaDB-поиск и Gemini LLM в ноды через DI.
+3. **Simple RAG Chain** (`src/final_chain.py`) — legacy fallback: гибридный поиск → FlashRank rerank → LLM.
 
 ### Основные этапы (Multi-Agent RAG)
 
@@ -127,7 +128,8 @@ streamlit run app.py     # Запуск UI
 |------------|----------|
 | `agents/` | Логика мульти-агентных систем: `multiagent_rag.py` (ReAct-агенты с LangGraph). |
 | `prompts/` | Централизованное хранилище промптов (Jinja2) и реестр версий (`registry.yaml`). |
-| `src/` | Ядро RAG-логики: цепочки (`final_chain.py`), работа с векторной БД (`vector_store.py`), фабрики LLM. |
+| `src/` | Ядро RAG-логики: цепочки (`final_chain.py`), работа с векторной БД (`vector_store.py`), фабрики LLM (`llm_factory.py`). |
+| `src/v7/` | V7 pipeline: детерминированный RAG-граф с LangGraph (intent → router → retrieval → triage → verifier → rewriter). |
 | `config/` | Настройки приложения (`settings.py`) и доменный глоссарий (`term_glossary.yaml`). |
 | `eval/` | Скрипты для оценки качества ответов (DeepEval, Ragas). |
 | `tests/` | Юнит и интеграционные тесты. |
@@ -153,6 +155,46 @@ streamlit run app.py     # Запуск UI
 
 </details>
 
+### V7 Pipeline (`src/v7/`)
+
+Новый детерминированный RAG-граф без ReAct-петель. Все ноды — тонкие оркестраторы (read state → call function → write state), логика вынесена в `nlp_core` и `hard_gates`.
+
+```mermaid
+flowchart TD
+    Q[Запрос] --> Intent[Intent Gate]
+    Intent -->|noise| End[Конец]
+    Intent -->|domain| Router[Router]
+    Router -->|clarify| Clarify[Clarify Respond]
+    Router -->|normal| RagSimple[RAG Simple - hybrid retrieval]
+    RagSimple --> Triage[Evaluate Triage - hard gates]
+    Triage -->|sufficient| End
+    Triage -->|borderline| Verifier[LLM Verifier - Gemini Flash]
+    Triage -->|clearly_bad| RagComplex[RAG Complex - fallback retrieval]
+    Verifier -->|sufficient| End
+    Verifier -->|rewrite| Rewriter[Rewriter - Gemini Flash]
+    Rewriter --> RagSimple
+    Verifier -->|escalate| RagComplex
+    RagComplex --> EvalComplex[Evaluate Complex]
+    EvalComplex -->|sufficient| End
+    EvalComplex -->|fail| Abstain[Abstain]
+```
+
+**Bridge** (`src/v7/bridge.py`): адаптер между существующей инфраструктурой и v7 нодами. Через DI инжектит:
+- Вектросный поиск (ChromaDB `similarity_search_with_score` → v7 dict format)
+- LLM Verifier (Gemini Flash, thinking: 1024, JSON mode) — верифицирует passages
+- LLM Rewriter (Gemini Flash, thinking: 1024) — переформулирует запрос с защитой идентификаторов документов
+
+**Модули:**
+| Модуль | Описание |
+|--------|----------|
+| `state_types.py` | Pydantic-совместимые TypedDict-ы для RAGState |
+| `config_v7.py` | Настройки v7 (пороги, top_k, BM25 параметры) |
+| `nlp_core.py` | BM25 индекс, RRF merge, MMR select, keyword overlap |
+| `hard_gates.py` | Детерминированные проверки качества retrieval |
+| `nodes/` | Тонкие ноды графа (intent_gate, router, rag_simple, rag_complex, llm_verifier, rewriter, abstain и др.) |
+| `graph.py` | Сборка LangGraph StateGraph |
+| `bridge.py` | DI-адаптер: ChromaDB + Gemini → v7 pipeline |
+
 ### Known Issues / TODO
 - [ ] Оптимизация скорости FlashRank (задержка на CPU).
 - [x] Улучшение обработки таблиц в PDF документах (visual_proof с VLM).
@@ -161,6 +203,7 @@ streamlit run app.py     # Запуск UI
 - [ ] Калибровка thinking budget (8192/1024) под реальные запросы.
 - [x] Доменный глоссарий для детерминированной расшифровки сокращений.
 - [ ] Логирование промахов глоссария для итеративного пополнения.
+- [x] V7 pipeline с детерминированным графом и LLM verifier/rewriter через DI bridge.
 
 ### Prompt Management System
 
