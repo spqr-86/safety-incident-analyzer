@@ -91,7 +91,7 @@ pytest
 | 2 | `hard_gates` | ✅ Done | `feature/v7-migration-stage1` |
 | 3 | `nodes/*` | ✅ Done | `feature/v7-migration-stage1` |
 | 4 | `graph.py` | ✅ Done | `feature/v7-migration-stage1` |
-| 5 | Миграция + cleanup | Pending | — |
+| 5 | Миграция + cleanup | ✅ Done | `feature/v7-migration-stage1` |
 
 ## Как продолжить ("продолжи миграцию v7")
 1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
