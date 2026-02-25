@@ -10,7 +10,8 @@ class TestV7ConfigDefaults:
     def test_hard_gate_threshold(self):
         from src.v7.config import v7_config
 
-        assert v7_config.HARD_GATE_THRESHOLD == 0.65
+        # Calibrated for ChromaDB L2→similarity(1/(1+d)): relevant docs score ~0.44–0.56
+        assert v7_config.HARD_GATE_THRESHOLD == 0.40
 
     def test_triage_soft_threshold(self):
         from src.v7.config import v7_config
@@ -45,12 +46,14 @@ class TestV7ConfigDefaults:
     def test_keyword_overlap_active(self):
         from src.v7.config import v7_config
 
-        assert v7_config.MIN_KEYWORD_OVERLAP_ACTIVE == 0.3
+        # Lowered from 0.3: Russian adj/noun lemmas differ ("лестничный"≠"лестница")
+        assert v7_config.MIN_KEYWORD_OVERLAP_ACTIVE == 0.15
 
     def test_keyword_overlap_original(self):
         from src.v7.config import v7_config
 
-        assert v7_config.MIN_KEYWORD_OVERLAP_ORIGINAL == 0.2
+        # Drift detection only — looser than active threshold
+        assert v7_config.MIN_KEYWORD_OVERLAP_ORIGINAL == 0.10
 
     def test_max_rewrite_attempts(self):
         from src.v7.config import v7_config

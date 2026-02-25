@@ -8,12 +8,15 @@ from src.v7.nodes.llm_verifier import llm_verifier, route_after_verifier
 
 
 def _make_state(top_score=0.7, iteration=0, min_confidence=0.5):
+    # passage text must contain query keywords so stub keyword-overlap check passes.
     return {
         "query": "ограждение лестница",
         "active_query": "ограждение лестница",
         "retrieval_attempts": [
             {
-                "passages": [{"text": "test", "score": top_score}],
+                "passages": [
+                    {"text": "ограждение лестничных маршей", "score": top_score}
+                ],
                 "top_score": top_score,
             }
         ],

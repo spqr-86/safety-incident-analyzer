@@ -41,7 +41,13 @@ VERIFIER_SYSTEM_PROMPT = """\
 def _stub_verify(
     original_query: str, active_query: str, passages: List[dict]
 ) -> VerificationResult:
-    """Rule-based stub for testing. Production: LLM call."""
+    """Rule-based stub for testing. Production: LLM call.
+
+    Checks both semantic score (top_score) and keyword overlap so OOS queries
+    that happen to get high BM25 scores don't slip through as 'sufficient'.
+    """
+    from src.v7.nlp_core import compute_keyword_overlap
+
     if not passages:
         return VerificationResult(
             verdict="escalate",
@@ -49,15 +55,22 @@ def _stub_verify(
             confidence=0.95,
             missing_aspects=["весь контекст"],
         )
-    top = max(p.get("score", 0) for p in passages)
-    if top >= 0.60:
+    # Only semantic scores (0-1 range); BM25 scores can be >1 and are not comparable.
+    semantic_scores = [p.get("score", 0) for p in passages if p.get("score", 0) <= 1.0]
+    top = max(semantic_scores, default=0.0)
+
+    # Require both good score AND keyword overlap to prevent OOS false positives.
+    overlap = compute_keyword_overlap(active_query, passages)
+    has_domain_signal = overlap >= 0.10
+
+    if top >= 0.60 and has_domain_signal:
         return VerificationResult(
             verdict="sufficient",
             reason="Passages релевантны.",
             missing_aspects=[],
             confidence=0.85,
         )
-    if top >= 0.40:
+    if top >= 0.40 and has_domain_signal:
         return VerificationResult(
             verdict="rewrite",
             reason="Passages частично релевантны.",

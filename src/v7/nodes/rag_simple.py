@@ -64,7 +64,9 @@ def rag_simple(state: RAGState) -> RAGState:
             vector_results, key=lambda x: x.get("score", 0.0), reverse=True
         )
 
-    top_score = max((p.get("score", 0.0) for p in passages), default=0.0)
+    # top_score must be a semantic similarity (0-1 from ChromaDB).
+    # BM25 scores are unbounded (0-20+) and must NOT be compared to threshold.
+    top_score = max((p.get("score", 0.0) for p in vector_results), default=0.0)
 
     _, metrics = compute_attempt_metrics(original_q, active_q, passages, plan)
     metrics["retrieval_type"] = "hybrid_rrf"

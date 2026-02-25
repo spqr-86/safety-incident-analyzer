@@ -66,6 +66,27 @@ STOP_WORDS: frozenset[str] = frozenset(
         "соответствие",
         "согласно",
         "мочь",
+        # interrogative / modal words — not domain content
+        "какой",
+        "каковой",  # lemma of "какова", "каков", "каковы"
+        "такой",  # lemma of "такое" (from "что такое X")
+        "этот",
+        "сколько",
+        "когда",
+        "где",
+        "почему",
+        "зачем",
+        "можно",
+        "нужно",
+        "надо",
+        "есть",
+        "ли",
+        # Geographical / attribution words — appear in ALL Russian regulatory docs,
+        # provide no domain discriminating power (every standard says "РФ" / "Россия").
+        "россия",
+        "российский",  # lemma of "Российской", "Российская", etc.
+        "федерация",
+        "федеральный",
     }
 )
 
