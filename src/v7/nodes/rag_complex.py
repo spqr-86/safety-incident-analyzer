@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 from src.v7.config import v7_config
 from src.v7.hard_gates import compute_attempt_metrics, validate_filters
@@ -17,12 +17,19 @@ def _default_vector_search(**kwargs) -> List[dict]:
 
 
 _vector_search: Callable[..., List[dict]] = _default_vector_search
+_rerank_fn: Optional[Callable[[str, List[dict], int], List[dict]]] = None
 
 
 def set_vector_search(fn: Callable[..., List[dict]]) -> None:
     """Inject vector search implementation for complex retrieval."""
     global _vector_search
     _vector_search = fn
+
+
+def set_rerank_fn(fn: Callable[[str, List[dict], int], List[dict]]) -> None:
+    """Inject FlashRank reranker. Signature: fn(query, passages, top_k) -> passages."""
+    global _rerank_fn
+    _rerank_fn = fn
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────
@@ -61,11 +68,12 @@ def rag_complex(state: RAGState) -> RAGState:
     passages = _vector_search(
         query=active_q,
         filters=safe_filters,
-        top_k=12,
-        rerank=True,
-        mmr=True,
-        mmr_lambda=slow_plan.get("mmr_lambda", 0.7),
+        top_k=slow_plan["top_k"],
     )
+
+    # FlashRank reranking (if injected)
+    if _rerank_fn is not None and passages:
+        passages = _rerank_fn(active_q, passages, slow_plan["top_k"])
     top_score = max((p.get("score", 0.0) for p in passages), default=0.0)
 
     _, metrics = compute_attempt_metrics(original_q, active_q, passages, slow_plan)

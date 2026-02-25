@@ -5,6 +5,7 @@ Responsibilities:
 2. Build BM25 corpus from ChromaDB docs
 3. Inject search functions into rag_simple / rag_complex nodes
 4. Inject LLM-backed verify and rewrite functions
+5. Inject FlashRank reranker into rag_complex
 """
 
 from __future__ import annotations
@@ -26,6 +27,39 @@ from src.v7.nodes.utils import extract_doc_identifiers
 from src.v7.state_types import VerificationResult
 
 logger = logging.getLogger(__name__)
+
+
+def make_rerank_fn(
+    model_name: str = "ms-marco-MiniLM-L-12-v2",
+    cache_dir: str = ".flashrank_cache",
+) -> Callable[[str, List[dict], int], List[dict]]:
+    """Create a FlashRank reranker function for v7 rag_complex.
+
+    Signature: fn(query, passages, top_k) -> passages (reranked, top_k items).
+    Passages must have 'text' key; score is updated with FlashRank score.
+    """
+    from flashrank import Ranker, RerankRequest
+
+    ranker = Ranker(model_name=model_name, cache_dir=cache_dir)
+
+    def _rerank(query: str, passages: List[dict], top_k: int) -> List[dict]:
+        if not passages:
+            return passages
+        rerank_request = RerankRequest(
+            query=query,
+            passages=[
+                {"id": i, "text": p.get("text", "")} for i, p in enumerate(passages)
+            ],
+        )
+        results = ranker.rerank(rerank_request)
+        # results: list of dicts with 'id', 'score', 'text'
+        reranked = []
+        for r in results[:top_k]:
+            orig = passages[r["id"]]
+            reranked.append({**orig, "score": round(float(r["score"]), 4)})
+        return reranked
+
+    return _rerank
 
 
 def make_vector_search_fn(vector_store) -> Callable[..., List[dict]]:
@@ -149,8 +183,11 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
     1. Creates vector search wrapper
     2. Injects it into rag_simple and rag_complex nodes
     3. Builds BM25 index from full corpus
-    4. Injects LLM-backed verify and rewrite functions (if provider available)
+    4. Injects FlashRank reranker into rag_complex
+    5. Injects LLM-backed verify and rewrite functions (if provider available)
     """
+    from config.settings import settings
+
     search_fn = make_vector_search_fn(vector_store)
     rag_simple_mod.set_vector_search(search_fn)
     rag_complex_mod.set_vector_search(search_fn)
@@ -162,6 +199,20 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
         for doc, meta in zip(all_data["documents"], all_data["metadatas"])
     ]
     init_bm25_index(corpus)
+
+    # Inject FlashRank reranker for complex path
+    try:
+        rerank_fn = make_rerank_fn(
+            model_name=settings.RERANKING_MODEL,
+            cache_dir=settings.FLASHRANK_CACHE_DIR,
+        )
+        rag_complex_mod.set_rerank_fn(rerank_fn)
+        logger.info("v7 FlashRank reranker injected successfully")
+    except Exception as exc:
+        logger.warning(
+            "Failed to initialize FlashRank for v7: %s. Complex path will skip reranking.",
+            exc,
+        )
 
     # Inject LLM-backed verify and rewrite functions
     if llm_provider:
