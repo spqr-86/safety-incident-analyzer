@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from src.v7.bridge import (
     init_v7_from_chroma,
+    make_generate_fn,
     make_rewrite_fn,
     make_vector_search_fn,
     make_verify_fn,
@@ -198,6 +199,59 @@ class TestMakeRewriteFn:
         assert "СНиП 21-01" in result
 
 
+class TestMakeGenerateFn:
+    @pytest.mark.unit
+    def test_returns_callable(self):
+        mock_llm = MagicMock()
+        fn = make_generate_fn(mock_llm)
+        assert callable(fn)
+
+    @pytest.mark.unit
+    def test_calls_llm_and_returns_answer(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = (
+            "Ответ: высота ограждений не менее 1.2 м."
+        )
+        fn = make_generate_fn(mock_llm)
+        result = fn(
+            query="высота ограждений",
+            active_query="высота ограждений",
+            passages=[{"text": "Ограждения высотой не менее 1.2 м.", "score": 0.8}],
+        )
+        assert result == "Ответ: высота ограждений не менее 1.2 м."
+        mock_llm.invoke.assert_called_once()
+
+    @pytest.mark.unit
+    def test_returns_empty_for_no_passages(self):
+        mock_llm = MagicMock()
+        fn = make_generate_fn(mock_llm)
+        result = fn(query="вопрос", active_query="вопрос", passages=[])
+        assert result == ""
+        mock_llm.invoke.assert_not_called()
+
+    @pytest.mark.unit
+    def test_fallback_on_llm_error(self):
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = RuntimeError("LLM unavailable")
+        fn = make_generate_fn(mock_llm)
+        passages = [{"text": "текст фрагмента", "score": 0.7}]
+        result = fn(query="вопрос", active_query="вопрос", passages=passages)
+        assert "текст фрагмента" in result
+
+    @pytest.mark.unit
+    def test_handles_gemini_style_content(self):
+        """Gemini returns content as list of dicts with 'text' key."""
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = [{"text": "Синтезированный ответ."}]
+        fn = make_generate_fn(mock_llm)
+        result = fn(
+            query="вопрос",
+            active_query="вопрос",
+            passages=[{"text": "фрагмент", "score": 0.75}],
+        )
+        assert result == "Синтезированный ответ."
+
+
 class TestInitV7FromChroma:
     @pytest.mark.unit
     @patch("src.v7.bridge.init_bm25_index")
@@ -232,6 +286,7 @@ class TestInitV7FromChroma:
 
     @pytest.mark.unit
     @patch("src.v7.bridge.get_gemini_llm")
+    @patch("src.v7.bridge.generate_answer_mod")
     @patch("src.v7.bridge.llm_verifier_mod")
     @patch("src.v7.bridge.rewriter_mod")
     @patch("src.v7.bridge.init_bm25_index")
@@ -244,6 +299,7 @@ class TestInitV7FromChroma:
         mock_bm25,
         mock_rewriter,
         mock_verifier,
+        mock_generate,
         mock_get_llm,
     ):
         mock_store = MagicMock()
@@ -255,10 +311,12 @@ class TestInitV7FromChroma:
         init_v7_from_chroma(mock_store, llm_provider="gemini")
         mock_verifier.set_verify_fn.assert_called_once()
         mock_rewriter.set_rewrite_fn.assert_called_once()
-        assert mock_get_llm.call_count == 2
+        mock_generate.set_generate_fn.assert_called_once()
+        assert mock_get_llm.call_count == 3
 
     @pytest.mark.unit
     @patch("src.v7.bridge.get_gemini_llm", side_effect=ImportError("no gemini"))
+    @patch("src.v7.bridge.generate_answer_mod")
     @patch("src.v7.bridge.llm_verifier_mod")
     @patch("src.v7.bridge.rewriter_mod")
     @patch("src.v7.bridge.init_bm25_index")
@@ -271,6 +329,7 @@ class TestInitV7FromChroma:
         mock_bm25,
         mock_rewriter,
         mock_verifier,
+        mock_generate,
         mock_get_llm,
     ):
         mock_store = MagicMock()
@@ -282,6 +341,7 @@ class TestInitV7FromChroma:
         init_v7_from_chroma(mock_store, llm_provider="gemini")
         mock_verifier.set_verify_fn.assert_not_called()
         mock_rewriter.set_rewrite_fn.assert_not_called()
+        mock_generate.set_generate_fn.assert_not_called()
 
     @pytest.mark.unit
     @patch("src.v7.bridge.init_bm25_index")

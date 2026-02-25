@@ -15,6 +15,7 @@ from langgraph.graph import END, StateGraph
 from src.v7.nodes.abstain import abstain
 from src.v7.nodes.evaluate_complex import evaluate_complex, route_after_eval_complex
 from src.v7.nodes.evaluate_triage import evaluate_triage, route_after_triage
+from src.v7.nodes.generate_answer import generate_answer
 from src.v7.nodes.intent_gate import intent_gate, route_by_intent
 from src.v7.nodes.llm_verifier import llm_verifier, route_after_verifier
 from src.v7.nodes.rag_complex import rag_complex
@@ -46,6 +47,7 @@ def build_graph(
         "rewriter": rewriter,
         "rag_complex": rag_complex,
         "evaluate_complex": evaluate_complex,
+        "generate_answer": generate_answer,
         "abstain": abstain,
     }
     if overrides:
@@ -73,7 +75,7 @@ def build_graph(
         "evaluate_triage",
         route_after_triage,
         {
-            "end": END,
+            "end": "generate_answer",
             "llm_verifier": "llm_verifier",
             "rag_complex": "rag_complex",
         },
@@ -82,7 +84,7 @@ def build_graph(
         "llm_verifier",
         route_after_verifier,
         {
-            "end": END,
+            "end": "generate_answer",
             "rewriter": "rewriter",
             "rag_complex": "rag_complex",
         },
@@ -92,8 +94,9 @@ def build_graph(
     g.add_conditional_edges(
         "evaluate_complex",
         route_after_eval_complex,
-        {"end": END, "abstain": "abstain"},
+        {"end": "generate_answer", "abstain": "abstain"},
     )
+    g.add_edge("generate_answer", END)
     g.add_edge("abstain", END)
 
     return g

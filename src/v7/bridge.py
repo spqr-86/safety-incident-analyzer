@@ -4,8 +4,8 @@ Responsibilities:
 1. Wrap ChromaDB's similarity_search_with_score -> v7 dict format
 2. Build BM25 corpus from ChromaDB docs
 3. Inject search functions into rag_simple / rag_complex nodes
-4. Inject LLM-backed verify and rewrite functions
-5. Inject FlashRank reranker into rag_complex
+4. Inject FlashRank reranker into rag_complex
+5. Inject LLM-backed verify, rewrite, and generate functions
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage
 from src.llm_factory import get_gemini_llm
 from src.parsers import extract_text, parse_json_from_response
 from src.v7.nlp_core import init_bm25_index
+from src.v7.nodes import generate_answer as generate_answer_mod
 from src.v7.nodes import llm_verifier as llm_verifier_mod
 from src.v7.nodes import rag_complex as rag_complex_mod
 from src.v7.nodes import rag_simple as rag_simple_mod
@@ -177,6 +178,47 @@ def make_rewrite_fn(llm) -> Callable[..., str]:
     return _rewrite
 
 
+_GENERATE_SYSTEM_PROMPT = (
+    "Ты — эксперт по нормативным документам в области охраны труда и промышленной "
+    "безопасности. На основе предоставленных фрагментов нормативных документов дай "
+    "точный, структурированный ответ на вопрос пользователя. "
+    "Ссылайся на конкретные документы и пункты. "
+    "Отвечай только на основе предоставленных фрагментов — не придумывай информацию."
+)
+
+
+def make_generate_fn(llm) -> Callable[[str, str, List[dict]], str]:
+    """Create an LLM-backed answer generation function for v7 generate_answer node.
+
+    Signature: fn(query, active_query, passages) -> answer_text.
+    Falls back to concatenating passage texts on LLM error.
+    """
+
+    def _generate(query: str, active_query: str, passages: List[dict]) -> str:
+        if not passages:
+            return ""
+        passages_text = "\n\n".join(
+            f"[{i + 1}] {p.get('text', '')}" for i, p in enumerate(passages[:15])
+        )
+        prompt = (
+            f"{_GENERATE_SYSTEM_PROMPT}\n\n"
+            f"Вопрос: {query}\n\n"
+            f"Найденные фрагменты ({len(passages[:15])}):\n{passages_text}\n\n"
+            "Ответ:"
+        )
+        try:
+            response = llm.invoke([HumanMessage(content=prompt)])
+            answer = extract_text(response.content).strip()
+            if not answer:
+                raise ValueError("Empty generation response")
+            return answer
+        except Exception as exc:
+            logger.warning("LLM generate failed: %s, falling back to stub", exc)
+            return "\n\n".join(p.get("text", "") for p in passages[:10])
+
+    return _generate
+
+
 def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> None:
     """Initialize v7 pipeline from existing ChromaDB vector store.
 
@@ -184,7 +226,7 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
     2. Injects it into rag_simple and rag_complex nodes
     3. Builds BM25 index from full corpus
     4. Injects FlashRank reranker into rag_complex
-    5. Injects LLM-backed verify and rewrite functions (if provider available)
+    5. Injects LLM-backed verify, rewrite, and generate functions (if provider available)
     """
     from config.settings import settings
 
@@ -214,7 +256,7 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
             exc,
         )
 
-    # Inject LLM-backed verify and rewrite functions
+    # Inject LLM-backed verify, rewrite, and generate functions
     if llm_provider:
         try:
             verifier_llm = get_gemini_llm(
@@ -224,10 +266,16 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
 
             rewriter_llm = get_gemini_llm(thinking_budget=1024)
             rewriter_mod.set_rewrite_fn(make_rewrite_fn(rewriter_llm))
-            logger.info("v7 LLM verifier and rewriter injected successfully")
+
+            generator_llm = get_gemini_llm(thinking_budget=4096)
+            generate_answer_mod.set_generate_fn(make_generate_fn(generator_llm))
+
+            logger.info(
+                "v7 LLM verifier, rewriter, and generator injected successfully"
+            )
         except Exception as exc:
             logger.warning(
-                "Failed to initialize LLM for v7 verifier/rewriter: %s. "
+                "Failed to initialize LLM for v7 verifier/rewriter/generator: %s. "
                 "Using rule-based stubs.",
                 exc,
             )

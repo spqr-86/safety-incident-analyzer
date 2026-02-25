@@ -180,5 +180,6 @@ class RAGState(TypedDict, total=False):
     clarify_message: str
     abstain_reason: str
     sufficiency_details: SufficiencyResult
+    answer: str  # synthesised LLM answer (set by generate_answer node)
     # UX
     status_message: str
