@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.v7.config import v7_config
 from src.v7.hard_gates import validate_filters
 from src.v7.nodes.utils import make_retrieval_id
 from src.v7.state_types import NextAfterRouter, RAGState, RetrievalPlan
@@ -41,13 +42,19 @@ FACTOID_MARKERS = frozenset(
 
 
 def _classify_query(q: str) -> tuple[bool, float]:
-    """(require_multi_doc, mmr_lambda) based on query type."""
+    """(require_multi_doc, mmr_lambda) based on query type.
+
+    mmr_lambda overrides config default:
+      0.5  — comparison (high diversity)
+      0.95 — factoid (high precision)
+      config default — general
+    """
     q_lower = q.lower()
     if any(m in q_lower for m in COMPARISON_MARKERS):
         return True, 0.5
     if any(m in q_lower for m in FACTOID_MARKERS):
         return False, 0.95
-    return False, 0.7
+    return False, v7_config.MMR_LAMBDA
 
 
 # ─── Node ─────────────────────────────────────────────────────────────────
@@ -69,15 +76,15 @@ def router(state: RAGState) -> RAGState:
     require_multi, mmr_lambda = _classify_query(q)
 
     plan: RetrievalPlan = {
-        "top_k": 12,
+        "top_k": v7_config.SIMPLE_TOP_K,
         "rerank": False,
-        "timeout_ms": 250,
-        "threshold": 0.45,
-        "min_passages": 5,
-        "min_keyword_overlap": 0.3,
-        "max_single_doc_ratio": 0.8,
-        "borderline_threshold": 0.25,
-        "min_verifier_confidence": 0.5,
+        "timeout_ms": v7_config.SIMPLE_TIMEOUT_MS,
+        "threshold": v7_config.HARD_GATE_THRESHOLD,
+        "min_passages": v7_config.MIN_PASSAGES,
+        "min_keyword_overlap": v7_config.MIN_KEYWORD_OVERLAP_ACTIVE,
+        "max_single_doc_ratio": v7_config.MAX_SINGLE_DOC_RATIO,
+        "borderline_threshold": v7_config.TRIAGE_SOFT_THRESHOLD,
+        "min_verifier_confidence": v7_config.VERIFIER_CONFIDENCE_ANCHOR,
         "require_multi_doc": require_multi,
         "mmr_lambda": mmr_lambda,
     }

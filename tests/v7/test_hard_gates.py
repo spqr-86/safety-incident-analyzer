@@ -210,8 +210,12 @@ class TestCheckFullTriage:
         assert result["triage"] == "borderline"
 
     @pytest.mark.unit
-    def test_borderline_due_to_diversity(self):
-        """Hard gates pass но diversity плохая → borderline (escalation_hint)."""
+    def test_single_doc_sufficient_when_multi_not_required(self):
+        """require_multi_doc=False + все из одного дока + hard gates pass → sufficient.
+
+        Ответ в одном документе — норма для factoid-запросов.
+        escalation_hint НЕ выставляется когда multi-doc не требуется.
+        """
         passages = [
             {"text": "ограждение лестница", "score": 0.8, "doc_id": "d1"},
             {"text": "ограждение балкон", "score": 0.7, "doc_id": "d1"},
@@ -219,6 +223,24 @@ class TestCheckFullTriage:
         ]
         result = check_full_triage(
             "ограждение лестница", "ограждение лестница", passages, self.PLAN
+        )
+        assert result["triage"] == "sufficient"
+        assert result["escalation_hint"] is False
+        assert (
+            result["diversity_ok"] is False
+        )  # diversity_ok=False, но это не эскалация
+
+    @pytest.mark.unit
+    def test_borderline_due_to_diversity_when_multi_required(self):
+        """require_multi_doc=True + все из одного дока → borderline (escalation_hint)."""
+        plan = {**self.PLAN, "require_multi_doc": True}
+        passages = [
+            {"text": "ограждение лестница", "score": 0.8, "doc_id": "d1"},
+            {"text": "ограждение балкон", "score": 0.7, "doc_id": "d1"},
+            {"text": "лестница нормы", "score": 0.65, "doc_id": "d1"},
+        ]
+        result = check_full_triage(
+            "ограждение лестница", "ограждение лестница", passages, plan
         )
         assert result["triage"] == "borderline"
         assert result["escalation_hint"] is True

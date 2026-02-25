@@ -10,7 +10,6 @@ End-to-end smoke test: удаляет семантический кэш и пр�
 
 import argparse
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -20,7 +19,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from agents.multiagent_rag import MultiAgentRAGWorkflow
 from src.vector_store import load_vector_store
-from config.settings import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,8 +43,12 @@ def clear_cache():
 def main():
     """Initializes and runs the RAG workflow, printing timing for each event."""
     parser = argparse.ArgumentParser(description="E2E smoke test для RAG workflow")
-    parser.add_argument("query", nargs="?", default=DEFAULT_QUERY, help="Вопрос для тестирования")
-    parser.add_argument("--keep-cache", action="store_true", help="Не удалять семантический кэш")
+    parser.add_argument(
+        "query", nargs="?", default=DEFAULT_QUERY, help="Вопрос для тестирования"
+    )
+    parser.add_argument(
+        "--keep-cache", action="store_true", help="Не удалять семантический кэш"
+    )
     args = parser.parse_args()
 
     query = args.query

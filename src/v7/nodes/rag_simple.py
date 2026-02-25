@@ -10,6 +10,7 @@ from src.v7.state_types import RAGState, RetrievalAttempt
 
 # ─── Retriever interface (injected at graph build time) ──────────────────
 
+
 # Default: stub that returns empty. Production: Chroma/Qdrant vector search.
 def _default_vector_search(**kwargs) -> List[dict]:
     return []

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Callable, List
 
+from src.v7.config import v7_config
 from src.v7.hard_gates import compute_attempt_metrics, validate_filters
 from src.v7.nodes.utils import make_retrieval_id
 from src.v7.state_types import RAGState, RetrievalAttempt, RetrievalPlan
 
 # ─── Retriever interface (injected, same as rag_simple) ──────────────────
+
 
 def _default_vector_search(**kwargs) -> List[dict]:
     return []
@@ -31,17 +33,17 @@ def rag_complex(state: RAGState) -> RAGState:
     current_plan = state.get("plan") or {}
 
     slow_plan: RetrievalPlan = {
-        "top_k": 60,
+        "top_k": v7_config.COMPLEX_TOP_K,
         "rerank": True,
-        "timeout_ms": 1200,
-        "threshold": max(0.50, current_plan.get("threshold", 0)),
-        "min_passages": 8,
-        "min_keyword_overlap": 0.4,
-        "max_single_doc_ratio": 0.7,
-        "borderline_threshold": 0.30,
-        "min_verifier_confidence": 0.5,
+        "timeout_ms": v7_config.COMPLEX_TIMEOUT_MS,
+        "threshold": max(v7_config.COMPLEX_THRESHOLD, current_plan.get("threshold", 0)),
+        "min_passages": v7_config.COMPLEX_MIN_PASSAGES,
+        "min_keyword_overlap": v7_config.COMPLEX_MIN_KW_OVERLAP,
+        "max_single_doc_ratio": v7_config.COMPLEX_MAX_SINGLE_DOC_RATIO,
+        "borderline_threshold": v7_config.COMPLEX_BORDERLINE_THRESHOLD,
+        "min_verifier_confidence": v7_config.VERIFIER_CONFIDENCE_ANCHOR,
         "require_multi_doc": current_plan.get("require_multi_doc", False),
-        "mmr_lambda": current_plan.get("mmr_lambda", 0.7),
+        "mmr_lambda": current_plan.get("mmr_lambda", v7_config.MMR_LAMBDA),
     }
 
     active_q = state.get("active_query", state.get("query", ""))

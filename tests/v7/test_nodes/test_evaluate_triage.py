@@ -78,7 +78,8 @@ class TestEvaluateTriage:
             "plan": {},
         }
         result = evaluate_triage(state)
-        # All from same doc_id → diversity bad → borderline
+        # plan={} → max_single_doc_ratio=1.0 → diversity_ok=True, escalation_hint=False.
+        # Fallback saved only when hard gates pass but soft signals escalate (plan with low ratio).
         if not result.get("sufficient"):
             details = result.get("sufficiency_details", {})
             if details.get("sufficient"):

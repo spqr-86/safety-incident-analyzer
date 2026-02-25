@@ -18,27 +18,40 @@ class V7Config(BaseSettings):
         extra="ignore",
     )
 
-    # Hard gates
-    HARD_GATE_THRESHOLD: float = 0.65
-    TRIAGE_SOFT_THRESHOLD: float = 0.40
-    COVERAGE_DROP_PCT: float = 0.30
+    # ── Simple path (rag_simple) ───────────────────────────────────────────
+    HARD_GATE_THRESHOLD: float = 0.65  # plan.threshold (similarity hard gate)
+    TRIAGE_SOFT_THRESHOLD: float = 0.40  # plan.borderline_threshold
+    MIN_PASSAGES: int = 5  # plan.min_passages
+    MIN_KEYWORD_OVERLAP_ACTIVE: float = 0.3  # plan.min_keyword_overlap
+    MAX_SINGLE_DOC_RATIO: float = 0.8  # plan.max_single_doc_ratio
+    SIMPLE_TOP_K: int = 12  # plan.top_k
+    SIMPLE_TIMEOUT_MS: int = 250  # plan.timeout_ms
 
-    # Retrieval
+    # ── Complex path (rag_complex) ────────────────────────────────────────
+    COMPLEX_THRESHOLD: float = 0.50  # min threshold for complex (floor)
+    COMPLEX_MIN_PASSAGES: int = 8  # plan.min_passages for slow path
+    COMPLEX_MIN_KW_OVERLAP: float = 0.4  # plan.min_keyword_overlap for slow path
+    COMPLEX_MAX_SINGLE_DOC_RATIO: float = 0.7
+    COMPLEX_BORDERLINE_THRESHOLD: float = 0.30
+    COMPLEX_TOP_K: int = 60  # plan.top_k for slow path
+    COMPLEX_TIMEOUT_MS: int = 1200
+
+    # ── Retrieval engine ──────────────────────────────────────────────────
     RRF_K: int = 60
     MMR_LAMBDA: float = 0.7
     BM25_TOP_K: int = 20
     SEMANTIC_TOP_K: int = 20
 
-    # Keyword overlap (dual)
-    MIN_KEYWORD_OVERLAP_ACTIVE: float = 0.3
+    # ── Keyword overlap (dual) ────────────────────────────────────────────
     MIN_KEYWORD_OVERLAP_ORIGINAL: float = 0.2
 
-    # LLM & Limits
+    # ── LLM & Limits ──────────────────────────────────────────────────────
     MAX_REWRITE_ATTEMPTS: int = 2
     MAX_CHUNKS_FOR_LLM: int = 10
-    VERIFIER_CONFIDENCE_ANCHOR: float = 0.7
+    VERIFIER_CONFIDENCE_ANCHOR: float = 0.7  # plan.min_verifier_confidence
 
-    # Anti-injection
+    # ── Anti-injection ────────────────────────────────────────────────────
+    COVERAGE_DROP_PCT: float = 0.30
     MAX_INPUT_LENGTH: int = 2000
     BLOCKED_PATTERNS: list[str] = [
         "ignore previous",

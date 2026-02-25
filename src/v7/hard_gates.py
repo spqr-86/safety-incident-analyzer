@@ -126,10 +126,13 @@ def check_full_triage(
 
     unique_docs, max_doc_ratio = compute_doc_diversity(passages)
     diversity_ok = max_doc_ratio <= plan.get("max_single_doc_ratio", 1.0)
-    escalation_hint = not diversity_ok
 
     # v6.1: если router выставил require_multi_doc, diversity = hard gate
     require_multi = plan.get("require_multi_doc", False)
+    # escalation_hint только когда multi-doc требуется —
+    # для factoid-запросов (require_multi=False) ответ в одном документе норма.
+    escalation_hint = not diversity_ok and require_multi
+
     if require_multi and not diversity_ok:
         hard_sufficient = False
     else:
