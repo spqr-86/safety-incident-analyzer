@@ -10,13 +10,14 @@ class TestV7ConfigDefaults:
     def test_hard_gate_threshold(self):
         from src.v7.config import v7_config
 
-        # Calibrated for ChromaDB L2→similarity(1/(1+d)): relevant docs score ~0.44–0.56
-        assert v7_config.HARD_GATE_THRESHOLD == 0.40
+        # Acceptance threshold: relevant docs score ~0.44–0.56 → 0.50 separates good from uncertain
+        assert v7_config.HARD_GATE_THRESHOLD == 0.50
 
     def test_triage_soft_threshold(self):
         from src.v7.config import v7_config
 
-        assert v7_config.TRIAGE_SOFT_THRESHOLD == 0.40
+        # Floor threshold: below 0.38 = clearly garbage. Zone [0.38, 0.50) → borderline → llm_verifier
+        assert v7_config.TRIAGE_SOFT_THRESHOLD == 0.38
 
     def test_coverage_drop_pct(self):
         from src.v7.config import v7_config
