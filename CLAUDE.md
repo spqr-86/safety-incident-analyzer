@@ -99,14 +99,27 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 | 3 | `nodes/*` | ✅ Done | `feature/v7-migration-stage1` |
 | 4 | `graph.py` | ✅ Done | `feature/v7-migration-stage1` |
 | 5 | Миграция + cleanup | ✅ Done | `feature/v7-migration-stage1` |
+| 6 | Production readiness | ✅ Done | `main` |
+
+**Этап 6 включает** (все на `main`):
+- `generate_answer` node + `answer: str` в RAGState — LLM-синтез через bridge DI
+- `make_generate_fn()` в bridge (Gemini, thinking_budget=4096, fallback=stub)
+- `intent_gate`: regex вместо frozenset (корректная фильтрация шума)
+- Тарировка порогов: `HARD_GATE_THRESHOLD=0.50`, `TRIAGE_SOFT_THRESHOLD=0.38` — открыта зона borderline→llm_verifier
+- Фикс `top_score` в rag_simple: использует только vector scores (не BM25-inflated)
+- E2E smoke test: `python scripts/trace_v7.py` (цветная трассировка пути + answer)
+- 151 unit-тест, все зелёные
+
+### E2E smoke test
+```bash
+python scripts/trace_v7.py "для кого проводится повторный инструктаж?"
+python scripts/trace_v7.py --no-chroma "привет как дела"   # stub mode
+```
 
 ### Как продолжить ("продолжи миграцию v7")
-1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
-2. Найди первый Pending этап в таблице выше
-3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
-4. Создай implementation plan через `superpowers:writing-plans`
-5. Реализуй через `superpowers:subagent-driven-development`
-6. Прогони E2E smoke test: `python scripts/verify_ux.py` (удаляет кэш, запускает вопрос через полный пайплайн)
-7. Обнови таблицу прогресса **во всех трёх файлах**: `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`
+1. Все этапы Done. Следующие возможные улучшения:
+   - Подключить USE_V7_GRAPH=true в `.env` и протестировать через Streamlit
+   - Починить FlashRank score inflation в complex path (сейчас LLM компенсирует)
+   - Добавить integration tests с реальным ChromaDB
 
 **Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`. При обновлении одного — обнови остальные два.
