@@ -161,13 +161,21 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 | 6 | Production readiness | ✅ Done | `main` |
 
 ### Как продолжить ("продолжи миграцию v7")
-1. Прочитай `docs/plans/2026-02-16-v7-migration-design.md` (дизайн + инструкции, секция 7)
-2. Найди первый Pending этап в таблице выше
-3. Создай ветку `feature/v7-migration-stageN` (или переключись на существующую)
-4. Создай implementation plan через `superpowers:writing-plans`
-5. Реализуй через `superpowers:subagent-driven-development`
-6. Прогони E2E smoke test: `python scripts/verify_ux.py` (удаляет кэш, запускает вопрос через полный пайплайн)
-7. Обнови таблицу прогресса **во всех трёх файлах**: `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`
+
+Все этапы 0–6 Done. Backlog (подробнее в `CLAUDE.md`):
+
+**[P1] Подключить app.py к `result["answer"]`** — срочно.
+- `app.py` строки ~237–261: добавить `elif result.get("answer"):` перед веткой `final_passages`.
+- Добавить `USE_V7_GRAPH=true` в `.env`, проверить через `streamlit run app.py`.
+
+**[P2] FlashRank score inflation** — evaluate_complex никогда не abstain.
+- После реранкинга scores ~0.999, COMPLEX_THRESHOLD=0.35 → всегда `sufficient`.
+- Фикс: хранить `vector_score` в passages, использовать для threshold; FlashRank только для сортировки.
+
+**[P3] Integration tests** — нет coverage с реальным ChromaDB.
+- Создать `tests/v7/test_integration.py`, маркер `@pytest.mark.integration`.
+
+E2E smoke test: `python scripts/trace_v7.py "вопрос"`
 
 ## 5. Cursor / Copilot Rules
 *No specific .cursorrules or .github/copilot-instructions.md found. Adhere to the guidelines above.*
