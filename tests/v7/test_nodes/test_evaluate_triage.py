@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.v7.nodes.evaluate_triage import (
+    _count_crossref_hits,
     _has_enumeration_intent,
     evaluate_triage,
     route_after_triage,
@@ -93,7 +94,10 @@ class TestEvaluateTriage:
 class TestRouteAfterTriage:
     @pytest.mark.unit
     def test_sufficient_routes_end(self):
-        assert route_after_triage({"sufficient": True, "query": "ограждение лестница"}) == "end"
+        assert (
+            route_after_triage({"sufficient": True, "query": "ограждение лестница"})
+            == "end"
+        )
 
     @pytest.mark.unit
     def test_borderline_routes_verifier(self):
@@ -114,22 +118,28 @@ class TestRouteAfterTriage:
         assert route_after_triage(state) == "rag_complex"
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("query", [
-        "кто проходит обучение по программе А охраны труда",
-        "какие категории работников проходят инструктаж",
-        "в каких случаях не требуется инструктаж",
-        "кто освобождается от первичного инструктажа",
-        "кому не требуется проходить обучение",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "кто проходит обучение по программе А охраны труда",
+            "какие категории работников проходят инструктаж",
+            "в каких случаях не требуется инструктаж",
+            "кто освобождается от первичного инструктажа",
+            "кому не требуется проходить обучение",
+        ],
+    )
     def test_enumeration_intent_detected(self, query: str):
         assert _has_enumeration_intent(query) is True
 
     @pytest.mark.unit
-    @pytest.mark.parametrize("query", [
-        "какова высота ограждения лестницы",
-        "что такое охрана труда",
-        "требования к освещению рабочего места",
-    ])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "какова высота ограждения лестницы",
+            "что такое охрана труда",
+            "требования к освещению рабочего места",
+        ],
+    )
     def test_no_enumeration_intent(self, query: str):
         assert _has_enumeration_intent(query) is False
 
@@ -150,3 +160,97 @@ class TestRouteAfterTriage:
             "query": "какова минимальная высота ограждения",
         }
         assert route_after_triage(state) == "end"
+
+
+class TestCrossrefSignal:
+    @pytest.mark.unit
+    def test_no_crossrefs_returns_zero(self):
+        passages = [
+            {"text": "высота ограждения не менее 1 метра"},
+            {"text": "ширина прохода должна составлять 0.8 метра"},
+        ]
+        assert _count_crossref_hits(passages) == 0
+
+    @pytest.mark.unit
+    def test_single_crossref_detected(self):
+        passages = [{"text": "в соответствии с пунктом 5 настоящего документа"}]
+        assert _count_crossref_hits(passages) >= 1
+
+    @pytest.mark.unit
+    def test_multiple_crossrefs_accumulate(self):
+        passages = [
+            {"text": "согласно пункту 3, за исключением случаев указанных в пункте 4"},
+            {
+                "text": "подпункт 2.1 устанавливает требования, в соответствии с приложением 1"
+            },
+        ]
+        hits = _count_crossref_hits(passages)
+        assert hits >= 3
+
+    @pytest.mark.unit
+    def test_crossref_escalation_on_sufficient_triage(self):
+        """When sufficient triage but many crossrefs: set sufficient=False, save fallback."""
+        passages = [
+            {
+                "text": (
+                    "согласно пункту 3, за исключением лиц указанных в пункте 4, "
+                    "в соответствии с приложением 1"
+                ),
+                "score": 0.85,
+                "doc_id": "d1",
+            },
+            {
+                "text": "пункт 5 настоящего документа содержит перечень исключений",
+                "score": 0.80,
+                "doc_id": "d2",
+            },
+            {"text": "ограждение лестница высота", "score": 0.75, "doc_id": "d3"},
+        ]
+        state = {
+            "query": "ограждение лестница",
+            "active_query": "ограждение лестница",
+            "retrieval_attempts": [_make_attempt(passages)],
+            "plan": {},
+        }
+        result = evaluate_triage(state)
+        # If crossref_hits >= threshold → not sufficient, fallback saved
+        from src.v7.nodes.evaluate_triage import (
+            _count_crossref_hits,
+            _CROSSREF_ESCALATION_THRESHOLD,
+        )
+
+        hits = _count_crossref_hits(passages)
+        if hits >= _CROSSREF_ESCALATION_THRESHOLD:
+            assert result["sufficient"] is False
+            assert "fallback_passages" in result
+            assert result["fallback_passages"] == passages
+
+    @pytest.mark.unit
+    def test_no_crossref_sufficient_stays_sufficient(self):
+        """When sufficient triage and no crossrefs: remains sufficient."""
+        passages = [
+            {
+                "text": "ограждение лестница высота не менее метра",
+                "score": 0.85,
+                "doc_id": "d1",
+            },
+            {
+                "text": "ограждение балкон требования проекта",
+                "score": 0.75,
+                "doc_id": "d2",
+            },
+            {
+                "text": "лестница ограждение строительные нормы",
+                "score": 0.70,
+                "doc_id": "d3",
+            },
+        ]
+        state = {
+            "query": "ограждение лестница",
+            "active_query": "ограждение лестница",
+            "retrieval_attempts": [_make_attempt(passages)],
+            "plan": {},
+        }
+        result = evaluate_triage(state)
+        # No crossrefs → sufficient should remain True
+        assert result["sufficient"] is True

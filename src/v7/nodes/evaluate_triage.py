@@ -28,6 +28,34 @@ _ENUMERATION_PATTERNS = [
 ]
 
 
+# Паттерны перекрёстных ссылок в нормативных документах.
+# Если retrieved чанки содержат много таких маркеров — ответ, вероятно, рассеян
+# по соседним пунктам и требует расширенного поиска.
+_CROSSREF_PATTERNS = [
+    r"\bпункт[а-я]*\s+\d+",
+    r"\bподпункт[а-я]*\s+\d+",
+    r"\bза\s+исключением\b",
+    r"\bв\s+соответствии\s+с\b",
+    r"\bуказанн[а-я]+\s+в\b",
+    r"\bсогласно\s+пункт",
+    r"\bсм\.\s+пункт",
+    r"\bприложени[яе]\s+\d+",
+]
+
+_CROSSREF_ESCALATION_THRESHOLD = 3  # >= N hits в топ-чанках → escalate
+
+
+def _count_crossref_hits(passages: list[dict]) -> int:
+    """Считает суммарное число crossref-паттернов в топ-5 passages."""
+    total = 0
+    for p in passages[:5]:
+        text = p.get("text", "").lower()
+        for pattern in _CROSSREF_PATTERNS:
+            if re.search(pattern, text):
+                total += 1
+    return total
+
+
 def _has_enumeration_intent(query: str) -> bool:
     """True если запрос требует полного перечисления категорий/условий.
 
@@ -56,9 +84,21 @@ def evaluate_triage(state: RAGState) -> RAGState:
     result = check_full_triage(original_q, active_q, last.get("passages", []), plan)
 
     if result["triage"] == "sufficient":
+        # Crossref escalation: many cross-references in retrieved chunks indicate
+        # the answer is distributed across multiple document sections.
+        # Save as fallback and escalate to rag_complex for fuller coverage.
+        passages = last.get("passages", [])
+        crossref_hits = _count_crossref_hits(passages)
+        if crossref_hits >= _CROSSREF_ESCALATION_THRESHOLD:
+            return {
+                "sufficient": False,
+                "sufficiency_details": result,
+                "fallback_passages": passages,
+                "fallback_score": result["top_score"],
+            }
         return {
             "sufficient": True,
-            "final_passages": last["passages"],
+            "final_passages": passages,
             "final_score": result["top_score"],
             "sufficiency_details": result,
         }
