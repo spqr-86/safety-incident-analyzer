@@ -236,6 +236,8 @@ if user_query:
                 answer = result["clarify_message"]
             elif result.get("abstain_reason"):
                 answer = result["abstain_reason"]
+            elif result.get("answer"):
+                answer = result["answer"]
             elif result.get("final_passages"):
                 passages = result["final_passages"]
                 texts = [p.get("text", "") for p in passages[:10]]
