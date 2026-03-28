@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from src.v7.nodes.evaluate_triage import evaluate_triage, route_after_triage
+from src.v7.nodes.evaluate_triage import (
+    _has_enumeration_intent,
+    evaluate_triage,
+    route_after_triage,
+)
 
 
 def _make_attempt(passages, plan=None):
@@ -89,13 +93,14 @@ class TestEvaluateTriage:
 class TestRouteAfterTriage:
     @pytest.mark.unit
     def test_sufficient_routes_end(self):
-        assert route_after_triage({"sufficient": True}) == "end"
+        assert route_after_triage({"sufficient": True, "query": "ограждение лестница"}) == "end"
 
     @pytest.mark.unit
     def test_borderline_routes_verifier(self):
         state = {
             "sufficient": False,
             "sufficiency_details": {"triage": "borderline"},
+            "query": "ограждение лестница",
         }
         assert route_after_triage(state) == "llm_verifier"
 
@@ -104,5 +109,44 @@ class TestRouteAfterTriage:
         state = {
             "sufficient": False,
             "sufficiency_details": {"triage": "clearly_bad"},
+            "query": "ограждение лестница",
         }
         assert route_after_triage(state) == "rag_complex"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("query", [
+        "кто проходит обучение по программе А охраны труда",
+        "какие категории работников проходят инструктаж",
+        "в каких случаях не требуется инструктаж",
+        "кто освобождается от первичного инструктажа",
+        "кому не требуется проходить обучение",
+    ])
+    def test_enumeration_intent_detected(self, query: str):
+        assert _has_enumeration_intent(query) is True
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("query", [
+        "какова высота ограждения лестницы",
+        "что такое охрана труда",
+        "требования к освещению рабочего места",
+    ])
+    def test_no_enumeration_intent(self, query: str):
+        assert _has_enumeration_intent(query) is False
+
+    @pytest.mark.unit
+    def test_enumeration_query_forces_complex_even_if_sufficient(self):
+        """Sufficient simple-triage result should still go to rag_complex for enumeration queries."""
+        state = {
+            "sufficient": True,
+            "query": "кто проходит обучение по программе А охраны труда",
+        }
+        assert route_after_triage(state) == "rag_complex"
+
+    @pytest.mark.unit
+    def test_non_enumeration_sufficient_routes_end(self):
+        """Non-enumeration sufficient result should go to end as before."""
+        state = {
+            "sufficient": True,
+            "query": "какова минимальная высота ограждения",
+        }
+        assert route_after_triage(state) == "end"
