@@ -84,7 +84,7 @@ with st.sidebar:
 
     # V7 toggle (feature-flagged)
     if V7_AVAILABLE and settings.USE_V7_GRAPH:
-        v7_mode = st.toggle("🔬 V7 Graph (modular pipeline)", value=False)
+        v7_mode = st.toggle("🔬 V7 Graph (modular pipeline)", value=True)
     else:
         v7_mode = False
 

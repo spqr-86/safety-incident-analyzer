@@ -1,4 +1,42 @@
+# Core ML/NLP
 sentence-transformers
 pymorphy3
 razdel
 rank_bm25
+
+# LangChain / LangGraph
+langchain
+langchain-core
+langchain-community
+langchain-openai
+langchain-google-genai
+langchain-chroma
+langchain-classic
+langchain-text-splitters
+langgraph
+
+# Vector store
+chromadb
+pysqlite3-binary
+
+# LLM providers
+openai
+google-genai
+
+# Reranking
+FlashRank
+
+# Document processing
+docling
+PyMuPDF
+
+# Web / UI
+streamlit
+
+# Config & utils
+pydantic
+pydantic-settings
+python-dotenv
+Jinja2
+PyYAML
+Pillow
