@@ -93,6 +93,54 @@ def make_vector_search_fn(vector_store) -> Callable[..., List[dict]]:
     return _search
 
 
+def make_section_fetch_fn(
+    vector_store,
+    max_section_chunks: int = 30,
+) -> Callable[[List[dict]], List[dict]]:
+    """Create a section-aware expander from ChromaDB store.
+
+    Takes the top anchor passage, extracts parent_section + source from its metadata,
+    and fetches all chunks from that section (up to max_section_chunks).
+    Returns passages not already in the input list.
+    """
+
+    def _fetch_section(passages: List[dict]) -> List[dict]:
+        if not passages:
+            return []
+        anchor_meta = passages[0].get("metadata", {})
+        section = anchor_meta.get("parent_section", "")
+        source = anchor_meta.get("source", "")
+        if not section or not source:
+            return []
+        try:
+            col = vector_store._collection
+            results = col.get(
+                where={
+                    "$and": [
+                        {"parent_section": {"$eq": section}},
+                        {"source": {"$eq": source}},
+                    ]
+                },
+                include=["documents", "metadatas"],
+                limit=max_section_chunks,
+            )
+            extra = []
+            for doc, meta in zip(results["documents"], results["metadatas"]):
+                extra.append(
+                    {
+                        "text": doc,
+                        "metadata": dict(meta),
+                        "score": 0.0,  # no vector score for fetched chunks
+                    }
+                )
+            return extra
+        except Exception as exc:
+            logger.warning("section_fetch failed: %s", exc)
+            return []
+
+    return _fetch_section
+
+
 def make_verify_fn(llm) -> Callable[..., VerificationResult]:
     """Create a v7-compatible verify function backed by Gemini LLM."""
 
@@ -241,6 +289,14 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
         for doc, meta in zip(all_data["documents"], all_data["metadatas"])
     ]
     init_bm25_index(corpus)
+
+    # Inject section-aware expander for complex path
+    try:
+        section_fetch_fn = make_section_fetch_fn(vector_store)
+        rag_complex_mod.set_section_fetch_fn(section_fetch_fn)
+        logger.info("v7 section-aware expander injected successfully")
+    except Exception as exc:
+        logger.warning("Failed to initialize section fetch for v7: %s.", exc)
 
     # Inject FlashRank reranker for complex path
     try:

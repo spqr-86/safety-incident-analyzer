@@ -32,6 +32,15 @@ def set_rerank_fn(fn: Callable[[str, List[dict], int], List[dict]]) -> None:
     _rerank_fn = fn
 
 
+_section_fetch_fn: Optional[Callable[[List[dict]], List[dict]]] = None
+
+
+def set_section_fetch_fn(fn: Callable[[List[dict]], List[dict]]) -> None:
+    """Inject section-aware expander. Signature: fn(passages) -> additional_passages."""
+    global _section_fetch_fn
+    _section_fetch_fn = fn
+
+
 # ─── Node ─────────────────────────────────────────────────────────────────
 
 
@@ -70,6 +79,17 @@ def rag_complex(state: RAGState) -> RAGState:
         filters=safe_filters,
         top_k=slow_plan["top_k"],
     )
+
+    # Section-aware expansion: fetch all chunks from the same section as the top anchor.
+    # Helps for queries where the answer is scattered across multiple paragraphs of one section.
+    if _section_fetch_fn is not None and passages:
+        extra = _section_fetch_fn(passages)
+        if extra:
+            seen_texts = {p.get("text", "") for p in passages}
+            for p in extra:
+                if p.get("text", "") not in seen_texts:
+                    passages.append(p)
+                    seen_texts.add(p.get("text", ""))
 
     # FlashRank reranking (if injected)
     if _rerank_fn is not None and passages:
