@@ -82,27 +82,29 @@ with right:
 with st.sidebar:
     st.subheader("⚙️ Режим работы")
 
-    # V7 toggle (feature-flagged)
+    # V7 — основной режим
     if V7_AVAILABLE and settings.USE_V7_GRAPH:
-        v7_mode = st.toggle("🔬 V7 Graph (modular pipeline)", value=True)
+        v7_mode = st.toggle("🔬 V7 Graph (основной)", value=True)
     else:
         v7_mode = False
+        st.warning("V7 Graph недоступен.")
 
-    # MAS toggle
-    if MAS_AVAILABLE:
-        mas_mode = st.toggle("🧠 Multi-Agent RAG (Router → RAG → Verifier)", value=True)
-    else:
-        st.info("Multi-Agent RAG недоступен.")
-        mas_mode = False
+    # MAS — только если V7 выключен
+    mas_mode = False
+    if not v7_mode and MAS_AVAILABLE:
+        mas_mode = st.toggle("🧠 Multi-Agent RAG (устаревший)", value=False)
 
-    # Mutual exclusion: v7 overrides MAS
     if v7_mode:
-        mas_mode = False
+        st.caption("Hybrid RAG → LangGraph → Gemini")
+    elif mas_mode:
+        st.caption("Router → RAG Agent → Verifier")
+    else:
+        st.caption("Classic RAG (legacy)")
 
     st.divider()
 
     st.subheader("📚 Библиотека документов")
-    st.caption(f"Путь к БД: `{settings.CHROMA_DB_PATH}`")
+    st.caption(f"БД: `{settings.CHROMA_DB_PATH}`")
 
     # Кнопка пересоздания индекса
     if INDEX_AVAILABLE:
@@ -196,8 +198,7 @@ if "messages" not in st.session_state:
     st.session_state.messages = [
         {
             "role": "assistant",
-            "content": "Здравствуйте! Я использую Multi-Agent RAG с маршрутизацией и верификацией. "
-            "Задайте вопрос по охране труда, и я найду ответ в нормативных документах.",
+            "content": "Здравствуйте! Задайте вопрос по охране труда, и я найду ответ в нормативных документах (приказы, ТК РФ, СанПиН, ГОСТы).",
         }
     ]
 
@@ -228,27 +229,33 @@ if user_query:
     with st.chat_message("assistant"):
         if v7_mode and v7_app:
             # --- V7 GRAPH MODE ---
-            with st.spinner("V7 pipeline..."):
+            with st.spinner("Ищу в нормативных документах..."):
                 result = v7_app.invoke({"query": user_query})
 
             # Determine answer
             if result.get("clarify_message"):
                 answer = result["clarify_message"]
             elif result.get("abstain_reason"):
-                answer = result["abstain_reason"]
+                answer = f"Не могу ответить: {result['abstain_reason']}"
             elif result.get("answer"):
                 answer = result["answer"]
+                # Источники к синтезированному ответу
+                passages = result.get("final_passages", [])
+                if passages:
+                    with st.expander(f"🔎 Источники ({len(passages)})", expanded=False):
+                        for i, p in enumerate(passages[:show_sources_n], 1):
+                            src = p.get("metadata", {}).get("source", "N/A")
+                            score = p.get("score", 0.0)
+                            preview = p.get("text", "")[:500].strip().replace("\n", " ")
+                            st.markdown(f"**{i}.** `{src}` · 🎯 {score:.2f}")
+                            st.code(preview, language="markdown")
+                            st.divider()
             elif result.get("final_passages"):
                 passages = result["final_passages"]
                 texts = [p.get("text", "") for p in passages[:10]]
-                answer = (
-                    f"Найдено {len(passages)} релевантных фрагментов "
-                    f"(score: {result.get('final_score', 0):.3f}).\n\n"
-                    + "\n\n---\n\n".join(texts)
-                )
-                # Show sources
+                answer = "\n\n---\n\n".join(texts)
                 with st.expander(f"🔎 Источники ({len(passages)})", expanded=False):
-                    for i, p in enumerate(passages, 1):
+                    for i, p in enumerate(passages[:show_sources_n], 1):
                         src = p.get("metadata", {}).get("source", "N/A")
                         score = p.get("score", 0.0)
                         preview = p.get("text", "")[:500].strip().replace("\n", " ")
@@ -256,9 +263,7 @@ if user_query:
                         st.code(preview, language="markdown")
                         st.divider()
             elif result.get("intent") == "noise":
-                answer = (
-                    "Это выглядит как приветствие. " "Задайте вопрос по охране труда."
-                )
+                answer = "Задайте вопрос по охране труда."
             else:
                 answer = "Не удалось получить ответ."
 
@@ -291,14 +296,6 @@ if user_query:
 
             # After streaming finishes
             status_container.empty()
-
-            # --- DEBUG: Показать сырой ответ ---
-            with st.expander("🐞 Debug: Сырой ответ от агента"):
-                st.code(final_answer, language="text")
-            # ------------------------------------
-
-            # The rest of the logic for images and sources remains similar,
-            # but will use final_answer and final_chunks.
 
             # Combine and deduplicate images
             images_from_text = find_proof_images(
