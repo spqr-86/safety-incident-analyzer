@@ -14,14 +14,30 @@
 source venv/bin/activate   # before any command
 ```
 
+## Deployment (VPS)
+
+- **URL:** http://213.176.64.237:8502
+- **Port:** 8502 (UFW opened), tmux session `sia` (attach: `tmux a -t sia`)
+- **Start:** `cd /home/petr/projects/safety-incident-analyzer && source venv/bin/activate && streamlit run app.py --server.port 8502`
+- **Indexed docs:** 7 PDFs (2464н, ТК РФ, СОУТ, ПБ и др.) → 749 chunks, collection `documents` в `chroma_db_openai/`
+
+**VPS env requirements:**
+- `HTTPS_PROXY=socks5h://localhost:40000` + `HTTP_PROXY=socks5h://localhost:40000` — WARP proxy для Gemini (VPS AEZA заблокирован по ASN)
+- PySocks установлен (`pip install httpx[socks] requests[socks]`) — нужен для SOCKS в httpx/requests
+
+## Known Issues
+
+- **Gemini 503 → stub fallback**: при перегрузке Gemini возвращает 503, `make_generate_fn` в `bridge.py` сразу падает в stub и возвращает сырой текст чанков вместо синтезированного ответа. Нужен retry с экспоненциальной задержкой.
+
 ## Commands
 
 ```bash
-streamlit run app.py                             # run app
+streamlit run app.py --server.port 8502          # run app (VPS port)
 python index.py                                  # reindex (DESTRUCTIVE: drops ChromaDB)
 pytest -v                                        # tests (-m unit / integration / "not slow")
 black . && ruff check . --fix                    # lint (run before commits)
 python scripts/validate_prompts.py               # validate after prompt changes
+python scripts/trace_v7.py "вопрос"             # E2E smoke test с трассировкой
 ```
 
 ## Code Style
@@ -121,3 +137,13 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 См. `docs/plans/backlog.md`.
 
 **Синхронизация:** Таблица прогресса дублируется в `CLAUDE.md`, `AGENTS.md` и `GEMINI.md`. При обновлении одного — обнови остальные два.
+
+---
+
+## Session Log
+
+### 2026-05-07
+
+- **Сделано:** Запущено на VPS порт 8502 (UFW opened). Переиндексировано 7 PDF → 749 чанков (ранее был только 1 документ — кеш из failed SOCKS runs). Исправлен `evaluate_complex`: `top_k` 12 → 24 (ответы стали полными, 8 категорий вместо 2-3 для "программа А"). Установлен PySocks для WARP proxy в Docling. В `.env` прописаны `HTTP(S)_PROXY=socks5h://localhost:40000`.
+- **Решения:** WARP proxy через `.env` (а не setenv в процессе) — Docling читает `.env` при старте. ChromaDB `document_cache/*.pkl` был corrupted (0 chunks) — удалили, переиндексировали. Gemini model = `gemini-3-flash-preview` (подтверждено через API list).
+- **Наблюдения:** Gemini 503 при перегрузке → bridge.py падает в stub → сырой текст вместо ответа. Нужен retry. `trace_v7.py` показывает `fallback_passages: 12` — это NOT означает использование fallback, это поле существует в state (от rag_simple), misleading.

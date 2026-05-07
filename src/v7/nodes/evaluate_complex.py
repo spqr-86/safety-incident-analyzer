@@ -24,7 +24,7 @@ def evaluate_complex(state: RAGState) -> RAGState:
     active_q = state.get("active_query", original_q)
 
     # 1. Merge passages from all attempts
-    merged = merge_all_passages(attempts, top_k=12)
+    merged = merge_all_passages(attempts, top_k=24)
     if merged:
         hard_m = check_hard_gates(original_q, active_q, merged, plan)
         if hard_m["sufficient"]:

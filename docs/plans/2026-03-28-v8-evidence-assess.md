@@ -31,9 +31,9 @@ ENUM_PATTERNS = [
 **Тест:** "Кто проходит обучение по программе А" → complexity=complex → rag_complex
 
 **Definition of Done:**
-- [ ] Паттерны добавлены в triage.py
-- [ ] pytest: тест что enumeration_intent форсирует complex
-- [ ] trace_v7.py "кто проходит обучение по программе А" → path включает rag_complex
+- [x] Паттерны добавлены в evaluate_triage.py (route_after_triage)
+- [x] pytest: тест что enumeration_intent форсирует complex (17 тестов зелёных)
+- [x] trace_v7.py "кто проходит обучение по программе А" → path включает rag_complex ✅
 
 ---
 
@@ -57,9 +57,9 @@ CROSSREF_PATTERNS = [
 ```
 
 **Definition of Done:**
-- [ ] Паттерны добавлены в evaluate_simple.py
-- [ ] pytest: чанки с перекрёстными ссылками не дают `sufficient` при low coverage
-- [ ] Новый route `expand` добавлен в граф
+- [x] Паттерны добавлены в evaluate_triage.py (_CROSSREF_PATTERNS, _count_crossref_hits)
+- [x] pytest: чанки с перекрёстными ссылками не дают `sufficient` (5 тестов, 22 всего)
+- [ ] Новый route `expand` добавлен в граф (отложено до Этапа 3)
 
 ---
 
@@ -89,6 +89,21 @@ intent_gate → initial_retrieve → evidence_assess
 - [ ] Граф перестроен, старые rag_simple/rag_complex рефакторены
 - [ ] pytest: coverage_ratio, dispersion_score, routing branches
 - [ ] E2E: trace_v7.py "кто проходит программу А" → expand_local path
+
+---
+
+---
+
+## P2 Backlog: FlashRank score inflation в evaluate_complex
+
+**Проблема:** FlashRank cross-encoder возвращает ~0.999 для всех чанков после rag_complex.
+`evaluate_complex` сравнивает FlashRank score с `COMPLEX_THRESHOLD=0.35` → всегда `sufficient`, `abstain` никогда не срабатывает.
+
+**Фикс:**
+- Хранить оригинальный vector score в passages (`vector_score`)
+- threshold check через `vector_score`, FlashRank score — только для сортировки
+
+**Влияние на метрики:** false_sufficiency_rate будет завышена до этого фикса.
 
 ---
 
