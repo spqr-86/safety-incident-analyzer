@@ -1,5 +1,7 @@
 # Codebase Analysis
 
+> **Детальное объяснение V7 с hard gates:** [v7-how-it-works.md](./v7-how-it-works.md)
+
 ## ⚡ TL;DR
 
 **Что это:** RAG-система для поиска по нормативным документам (ГОСТ, ТК РФ, приказы). Основной режим — V7 LangGraph Pipeline с детерминированным графом и Gemini-генерацией. MAS и Simple RAG — legacy.
