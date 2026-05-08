@@ -4,6 +4,42 @@
 
 ---
 
+## Используемые техники
+
+### Retrieval
+- **Гибридный поиск** — векторный (ChromaDB, cosine similarity 0–1) + BM25 (ключевые слова, бесшкальный)
+- **RRF (Reciprocal Rank Fusion)** — слияние двух списков без настройки весов: `score = Σ 1/(rank + 60)`
+- **FlashRank Reranking** — cross-encoder переранжирование топ-результатов после hybrid merge
+- **Query Expansion** — дополнительные термины из найденных документов (в RAG Complex)
+- **Multi-attempt merge** — слияние результатов нескольких попыток поиска, top_k=24
+
+### Качество ответов
+- **Hard Gates** — детерминированные пороги (score, кол-во чанков, keyword overlap) без LLM-решений
+- **3-way Triage** — маршрутизация по уверенности: sufficient / borderline / clearly_bad
+- **Document Diversity** — защита от ответа только из одного источника (max_doc_ratio ≤ 0.7)
+- **Abstain** — явный отказ при недостатке данных вместо галлюцинации
+
+### NLP и безопасность
+- **Term Glossary** — stem-based расшифровка аббревиатур для русского языка перед поиском
+- **Prompt Injection фильтр** — `sanitize_for_llm()` удаляет "ignore previous instructions" и подобное
+- **NoSQL Injection whitelist** — валидация фильтров ChromaDB через `ALLOWED_FILTER_KEYS`
+
+### Chunking и индексация
+- **Docling** — парсинг PDF/DOCX с сохранением структуры документа
+- **Chunk 1200 / overlap 150** — параметры подобраны под нормативные тексты (длинные абзацы с определениями)
+
+### LLM и оркестрация
+- **Gemini Flash, thinking_budget=4096** — управляемая глубина рассуждений модели
+- **Dependency Injection (bridge.py)** — LLM и vector search инжектятся в граф, не захардкожены → легко менять провайдера
+- **LangGraph StateGraph** — детерминированный граф состояний
+- **LangSmith** — трассировка каждого запроса в production
+
+### Eval
+- **166 unit-тестов** — покрытие nlp_core, hard_gates, всех нод графа
+- **A/B тестирование** — `run_ab_test.py` + LangSmith для сравнения версий
+
+---
+
 ## Зачем V7?
 
 Проблема предыдущих версий: система всегда отвечала, даже если ничего не нашла.
