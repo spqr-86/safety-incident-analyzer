@@ -35,7 +35,7 @@
 
 ---
 
-## [P0] Retry при Gemini 503 в bridge.py
+## ~~[P0] Retry при Gemini 503 в bridge.py~~ ✅ DONE 2026-05-08
 
 `make_generate_fn()` в `src/v7/bridge.py` при 503 от Gemini сразу падает в stub и возвращает сырой текст чанков вместо синтезированного ответа.
 

@@ -34,6 +34,7 @@ PyMuPDF
 streamlit
 
 # Config & utils
+tenacity
 pydantic
 pydantic-settings
 python-dotenv

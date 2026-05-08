@@ -13,7 +13,9 @@ from __future__ import annotations
 import logging
 from typing import Callable, List
 
+
 from langchain_core.messages import HumanMessage
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from src.llm_factory import get_gemini_llm
 from src.parsers import extract_text, parse_json_from_response
@@ -235,12 +237,34 @@ _GENERATE_SYSTEM_PROMPT = (
 )
 
 
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry on 503 / RESOURCE_EXHAUSTED / rate limit errors from Gemini."""
+    msg = str(exc).lower()
+    return any(
+        kw in msg
+        for kw in ("503", "resource_exhausted", "rate limit", "quota", "overloaded")
+    )
+
+
 def make_generate_fn(llm) -> Callable[[str, str, List[dict]], str]:
     """Create an LLM-backed answer generation function for v7 generate_answer node.
 
     Signature: fn(query, active_query, passages) -> answer_text.
-    Falls back to concatenating passage texts on LLM error.
+    Retries up to 3 times on Gemini 503/rate-limit before falling back to stub.
     """
+
+    @retry(
+        retry=retry_if_exception(_is_retryable),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=2, max=10),
+        reraise=True,
+    )
+    def _call_llm(prompt: str) -> str:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        answer = extract_text(response.content).strip()
+        if not answer:
+            raise ValueError("Empty generation response")
+        return answer
 
     def _generate(query: str, active_query: str, passages: List[dict]) -> str:
         if not passages:
@@ -255,13 +279,11 @@ def make_generate_fn(llm) -> Callable[[str, str, List[dict]], str]:
             "Ответ:"
         )
         try:
-            response = llm.invoke([HumanMessage(content=prompt)])
-            answer = extract_text(response.content).strip()
-            if not answer:
-                raise ValueError("Empty generation response")
-            return answer
+            return _call_llm(prompt)
         except Exception as exc:
-            logger.warning("LLM generate failed: %s, falling back to stub", exc)
+            logger.warning(
+                "LLM generate failed after retries: %s, falling back to stub", exc
+            )
             return "\n\n".join(p.get("text", "") for p in passages[:10])
 
     return _generate
