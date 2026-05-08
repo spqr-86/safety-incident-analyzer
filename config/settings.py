@@ -48,7 +48,7 @@ class Settings(BaseSettings):
 
     # Google Gemini settings
     GEMINI_API_KEY: str = ""
-    GEMINI_FAST_MODEL: str = "gemini-3-flash-preview"
+    GEMINI_FAST_MODEL: str = "gemini-3-flash"
 
     # Agent workflow settings
     THINKING_BUDGET: int = 8192
