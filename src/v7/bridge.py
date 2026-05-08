@@ -25,11 +25,33 @@ from src.v7.nodes import llm_verifier as llm_verifier_mod
 from src.v7.nodes import rag_complex as rag_complex_mod
 from src.v7.nodes import rag_simple as rag_simple_mod
 from src.v7.nodes import rewriter as rewriter_mod
+from src.v7.nodes import visual_enrichment as visual_enrichment_mod
 from src.v7.nodes.llm_verifier import VERIFIER_SYSTEM_PROMPT
 from src.v7.nodes.utils import extract_doc_identifiers
 from src.v7.state_types import VerificationResult
 
 logger = logging.getLogger(__name__)
+
+
+def make_visual_proof_fn() -> Callable[[str, int, list, str], str]:
+    """Create a visual proof function for v7 visual_enrichment node.
+
+    Wraps _visual_proof_impl from agent_tools.
+    Signature: fn(source, page_no, bbox, mode) -> str (path or analysis text).
+    Returns None if agent_tools is unavailable.
+    """
+    try:
+        from src.agent_tools import _visual_proof_impl
+    except ImportError:
+        logger.warning(
+            "make_visual_proof_fn: src.agent_tools not available, visual enrichment disabled"
+        )
+        return None  # type: ignore[return-value]
+
+    def _visual_proof(source: str, page_no: int, bbox: list, mode: str = "show") -> str:
+        return _visual_proof_impl(source, page_no, bbox, mode)
+
+    return _visual_proof
 
 
 def make_rerank_fn(
@@ -357,3 +379,12 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
                 "Using rule-based stubs.",
                 exc,
             )
+
+    # Inject visual proof function for visual_enrichment node
+    try:
+        visual_proof_fn = make_visual_proof_fn()
+        if visual_proof_fn is not None:
+            visual_enrichment_mod.set_visual_proof_fn(visual_proof_fn)
+            logger.info("v7 visual proof injected successfully")
+    except Exception as exc:
+        logger.warning("Failed to initialize visual proof for v7: %s.", exc)

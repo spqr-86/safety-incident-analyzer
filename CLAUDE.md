@@ -27,7 +27,9 @@ source venv/bin/activate   # before any command
 
 ## Known Issues
 
-- **Gemini 503 → stub fallback**: при перегрузке Gemini возвращает 503, `make_generate_fn` в `bridge.py` сразу падает в stub и возвращает сырой текст чанков вместо синтезированного ответа. Нужен retry с экспоненциальной задержкой.
+- ~~**Gemini 503 → stub fallback**~~ ✅ Fixed 2026-05-08: tenacity retry (3 attempts, exp backoff 2→4→8s), fallback to stub only after all retries.
+- **P1** `app.py` не читает `result["answer"]` — см. backlog.md
+- **P2** FlashRank score inflation в evaluate_complex — см. backlog.md
 
 ## Commands
 
@@ -141,6 +143,12 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ---
 
 ## Session Log
+
+### 2026-05-08
+
+- **Сделано:** visual_enrichment нода добавлена в V7 pipeline (src/v7/nodes/visual_enrichment.py). Вставлена между evaluate_complex/triage/verifier → generate_answer в graph.py. make_visual_proof_fn() + inject в bridge.py. 270 тестов, все зелёные.
+- **Решения:** Ruff-хук снимает неиспользуемые импорты после каждого Edit — нужно добавлять import и его использование в одном edit. Обходное решение: сначала добавить использование, потом import.
+- **Наблюдения:** visual_enrichment — no-op без inject (нет visual_proof_fn) и нет agent_tools на VPS → безопасно деплоить.
 
 ### 2026-05-07
 

@@ -22,6 +22,7 @@ from src.v7.nodes.rag_complex import rag_complex
 from src.v7.nodes.rag_simple import rag_simple
 from src.v7.nodes.rewriter import rewriter
 from src.v7.nodes.router import clarify_respond, route_after_router, router
+from src.v7.nodes.visual_enrichment import visual_enrichment
 from src.v7.state_types import RAGState
 
 
@@ -47,6 +48,7 @@ def build_graph(
         "rewriter": rewriter,
         "rag_complex": rag_complex,
         "evaluate_complex": evaluate_complex,
+        "visual_enrichment": visual_enrichment,
         "generate_answer": generate_answer,
         "abstain": abstain,
     }
@@ -75,7 +77,7 @@ def build_graph(
         "evaluate_triage",
         route_after_triage,
         {
-            "end": "generate_answer",
+            "end": "visual_enrichment",
             "llm_verifier": "llm_verifier",
             "rag_complex": "rag_complex",
         },
@@ -84,7 +86,7 @@ def build_graph(
         "llm_verifier",
         route_after_verifier,
         {
-            "end": "generate_answer",
+            "end": "visual_enrichment",
             "rewriter": "rewriter",
             "rag_complex": "rag_complex",
         },
@@ -94,8 +96,9 @@ def build_graph(
     g.add_conditional_edges(
         "evaluate_complex",
         route_after_eval_complex,
-        {"end": "generate_answer", "abstain": "abstain"},
+        {"end": "visual_enrichment", "abstain": "abstain"},
     )
+    g.add_edge("visual_enrichment", "generate_answer")
     g.add_edge("generate_answer", END)
     g.add_edge("abstain", END)
 
