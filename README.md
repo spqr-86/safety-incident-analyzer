@@ -22,46 +22,35 @@
 
 **Ключевые возможности:**
 
-*   ✅ 🔎 **Гибридный поиск**: комбинация семантического поиска (векторы) и поиска по ключевым словам (BM25).
-*   ✅ 🧠 **Умное ранжирование**: Использование FlashRank для пересортировки найденных контекстов.
-*   ✅ 🧪 **Многоуровневая проверка**: Агенты на базе LangGraph с использованием Chain-of-Thought (CoT) проверяют релевантность документов и корректность ответа.
-*   ✅ ⚖️ **Нормативная точность**: Философия "Нормативного зеркала" — строгая фильтрация бытовых домыслов и ответ только по подтвержденным фактам.
-*   ✅ 📄 **Универсальную загрузку**: Автоматическая конвертация PDF/DOCX в Markdown с помощью Docling.
-*   ✅ 💬 **Контекстный диалог**: Чат с визуализацией хода рассуждений агента (Chain-of-Thought).
-*   ✅ 📊 **Расширенная оценка**: Поддержка тестирования в режимах простого RAG и многоагентной системы (MAS).
-*   ✅ 🤖 **Multi-Agent RAG с ReAct-агентами**: Автономные RAG-агенты с инструментами поиска, визуальным подтверждением, thinking levels и верификацией (Gemini 3 / OpenAI).
-*   ✅ 📖 **Доменный глоссарий**: Детерминированное расширение запросов — неофициальные сокращения ("программа А") автоматически разворачиваются в официальные термины до обработки агентом.
+*   ✅ 🔎 **Гибридный поиск**: комбинация семантического поиска (векторы) и BM25, FlashRank reranking.
+*   ✅ 🧠 **V7 LangGraph Pipeline**: модульный граф rag_simple → rag_complex → evaluate_complex → generate_answer с детерминированными hard gates.
+*   ✅ ⚖️ **Нормативная точность**: строгая фильтрация — ответ только по подтверждённым фрагментам, abstain при недостаточной уверенности.
+*   ✅ 📄 **Универсальная загрузка**: PDF/DOCX через Docling → chunking → OpenAI embeddings → ChromaDB.
+*   ✅ 📖 **Доменный глоссарий**: детерминированное расширение запросов — "программа А" → официальный термин ещё до поиска.
+*   ✅ 📊 **Eval framework**: LangSmith трассировка, 166 unit-тестов, скрипты для A/B тестирования.
 
 ---
 
 ## 🧠 Ключевые технические решения
 
-### ✅ Решённые технические вызовы
+### V7 LangGraph Pipeline (основной)
 
-Проект построен на ряде продвинутых архитектурных паттернов:
+Модульный детерминированный граф без LLM-роутинга:
 
-1.  **Hybrid Retrieval**: Объединение результатов из ChromaDB (векторный поиск) и BM25Retriever. Оптимизировано для больших документов (K=40, Rerank Top-20).
-2.  **Reranking**: Применение FlashRank для точной селекции контекста.
-3.  **Agentic Workflow with CoT**: Использование LangGraph для оркестрации агентов с "цепочкой рассуждений" (Chain-of-Thought) в XML-тегах:
-    *   `RelevanceChecker`: Анализирует вопрос перед поиском.
-    *   `ResearchAgent`: "Думает" над найденными фрагментами, сопоставляет перекрестные ссылки.
-    *   `VerificationAgent`: Проверяет факты в формате JSON, минимизируя галлюцинации.
-4.  **Prompt Management System v2**: Поддержка продвинутых техник (Few-Shot, Negative Constraints, Role Prompting).
-5.  **Performance Optimization**: 
-    *   **Semantic Cache**: Мгновенные ответы (<0.1s) для повторных вопросов (SentenceTransformers).
-    *   **Parallel Execution**: Асинхронный запуск поисковых запросов (asyncio).
-    *   **Smart Caching**: Кэширование BM25 индексов.
-    *   **Smart Routing**: LLM-маршрутизация запросов.
-    *   **Latency Optimized**: Отключение тяжелого реранкинга для агента (35s -> 4s поиск).
-6.  **Evaluation Framework**: Скрипты для замера 11 метрик качества в разных режимах работы (`--mode mas/rag`).
-7.  **Multi-Agent RAG с ReAct-агентом (Gemini 3)**: Упрощённая архитектура:
-    *   `Router Agent`: LLM-классификация (Simple/Complex/Chitchat) на базе Gemini Flash.
-    *   `RAG Agent` (Flash, thinking: 8192): Единый ReAct-агент с `search_documents` + `visual_proof`.
-    *   `Verifier`: JSON-верификация с возможностью пропуска для очевидных ответов (Smart Skip).
-    *   Term Glossary: детерминированная расшифровка доменных сокращений перед фильтром
-    *   Поддержка OpenAI и Gemini как LLM-провайдеров
-    *   **Semantic Cache**: Кэширование ответов для мгновенных повторов (<0.1s).
-    *   **Parallel Execution**: Параллельный запуск поисковых инструментов (threading).
+```
+query → intent_gate → rag_simple → [sufficient?] → generate_answer
+                               ↓ no
+                          rag_complex → evaluate_complex → generate_answer
+                                                       ↓ fail
+                                                     abstain
+```
+
+1.  **`rag_simple`**: быстрый путь — hybrid retrieval (K=40) + FlashRank rerank. При высокой уверенности сразу идёт на генерацию.
+2.  **`rag_complex`**: глубокий поиск — BM25 расширение запроса, merge всех попыток (top_k=24).
+3.  **`evaluate_complex`**: детерминированные hard gates по score-порогам. Без LLM-вердиктов.
+4.  **`generate_answer`**: синтез ответа через Gemini Flash (thinking_budget=4096). Fallback — сырые чанки при 503.
+5.  **Доменный глоссарий** (`config/term_glossary.yaml`): расширение запросов до поиска, stem-based matching для русской морфологии.
+6.  **Prompt Management**: версионированные Jinja2 шаблоны, registry.yaml, override через env.
 
 ### 📊 Целевые метрики
 
@@ -147,29 +136,23 @@ streamlit run app.py
 ```mermaid
 flowchart TD
     subgraph Ingestion [Индексация]
-        Docs[Документы] --> Docling[Docling Parser]
-        Docling --> Split[Chunking]
-        Split --> Embed[Embeddings]
+        Docs[PDF / DOCX] --> Docling[Docling Parser]
+        Docling --> Split[Chunking\n1200 chars / 150 overlap]
+        Split --> Embed[OpenAI Embeddings]
         Embed --> DB[(ChromaDB)]
     end
 
-    subgraph Retrieval [Поиск]
-        Query[Вопрос] --> Search{Hybrid Search}
-        Search --> |Vector| DB
-        Search --> |Keyword| BM25[BM25 Retriever]
-        DB & BM25 --> Rerank[FlashRank Reranker]
-        Rerank --> Context[Top Context]
-    end
-
-    subgraph MultiAgent [Multi-Agent RAG - ReAct Agent]
-        Q2[Вопрос] --> Glossary[Term Glossary]
-        Glossary --> Router[Router Agent]
-        Router -->|chitchat/out_of_scope| Direct[Direct Response]
-        Router -->|rag| Agent[RAG Agent]
-        Agent --> VerifyMA[Verifier]
-        Agent -->|high_confidence| FinalMA
-        VerifyMA -->|approved| FinalMA[Format Final]
-        VerifyMA -->|needs_revision| Agent
+    subgraph V7 [V7 LangGraph Pipeline - основной]
+        Q[Вопрос] --> Glossary[Term Glossary\nрасширение аббревиатур]
+        Glossary --> Gate{intent_gate}
+        Gate -->|noise/chitchat| Abstain[abstain]
+        Gate -->|rag| Simple[rag_simple\nhybrid K=40 + FlashRank]
+        Simple -->|sufficient| Gen[generate_answer\nGemini Flash]
+        Simple -->|insufficient| Complex[rag_complex\nBM25 expansion + merge top-24]
+        Complex --> Eval[evaluate_complex\nhard gates]
+        Eval -->|pass| Gen
+        Eval -->|fail| Abstain
+        Gen --> Answer[Ответ + источники]
     end
 ```
 
@@ -192,17 +175,16 @@ flowchart TD
 
 ## 📈 Статус проекта
 
-*   ✅ Реализован основной пайплайн RAG (Hybrid Retrieval, Reranking)
-*   ✅ Многоагентная система проверки (LangGraph)
-*   ✅ Индексация документов (Docling)
-*   ✅ Веб-интерфейс (Streamlit)
-*   ✅ Multi-Agent RAG с ReAct-агентом и thinking levels (Gemini 3)
-*   ✅ Visual Proof (VLM-анализ PDF-страниц)
-*   ✅ Term Glossary (детерминированная расшифровка доменных сокращений)
-*   ✅ Semantic Cache (SentenceTransformers)
-*   ✅ Parallel Search Execution
-*   🔄 Улучшение метрик качества (Correctness, Faithfulness)
-*   🔄 Расширение тестового датасета
+*   ✅ V7 LangGraph Pipeline (rag_simple → rag_complex → evaluate_complex → generate_answer)
+*   ✅ Hybrid Retrieval (ChromaDB + BM25, K=40, FlashRank rerank)
+*   ✅ Hard gates с детерминированными score-порогами (без LLM-роутинга)
+*   ✅ Генерация ответов — Gemini Flash (thinking_budget=4096)
+*   ✅ Term Glossary — stem-based расшифровка доменных аббревиатур
+*   ✅ Индексация PDF/DOCX через Docling, 7 документов / 749 чанков
+*   ✅ Веб-интерфейс Streamlit, задеплоен на VPS (порт 8502)
+*   ✅ 166 unit-тестов, LangSmith трассировка
+*   🔄 Retry при Gemini 503 (backlog P0)
+*   🔄 Расширение тестового датасета (41 → 100 вопросов)
 
 ---
 
