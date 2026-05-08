@@ -144,11 +144,17 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 
 ## Session Log
 
-### 2026-05-08
+### 2026-05-08 (сессия 12)
 
-- **Сделано:** visual_enrichment нода добавлена в V7 pipeline (src/v7/nodes/visual_enrichment.py). Вставлена между evaluate_complex/triage/verifier → generate_answer в graph.py. make_visual_proof_fn() + inject в bridge.py. 270 тестов, все зелёные.
-- **Решения:** Ruff-хук снимает неиспользуемые импорты после каждого Edit — нужно добавлять import и его использование в одном edit. Обходное решение: сначала добавить использование, потом import.
-- **Наблюдения:** visual_enrichment — no-op без inject (нет visual_proof_fn) и нет agent_tools на VPS → безопасно деплоить.
+- **Сделано:** V8 Epic 1 (eval suite: metrics.py, run_eval.py, compare.py, 29 тестов) + V8 Epic 2 (evidence_assess: 3-verdict флаг, FlashRank в rag_simple, 314 тестов). Датасет очищен: 49→38 вопросов (удалены out-of-corpus). Модель: gemini-3-flash (нестабильна). V7 baseline stub-загрязнён — нужен перегон.
+- **Решения:** Смена модели в .env = невалидация baseline. Перед сменой модели предупреждать пользователя. Gemini dashboard "Gemini 3 Flash" ≠ API ID `gemini-3-flash` (404). Работающий: `gemini-3-flash-preview` (20 RPD) или `gemini-2.5-flash` (10K RPD).
+- **Наблюдения:** completeness=0.49 на 49 вопросах — 11 вопросов были out-of-corpus → реальный baseline на 38 вопросах ожидается 0.60-0.65. V8 evidence_assess даёт +0.002 — нужен Epic 3 (Multi-Query Expand) для реального улучшения.
+
+### 2026-05-08 (сессия 11)
+
+- **Сделано:** visual_enrichment нода добавлена в V7 pipeline. make_visual_proof_fn() + inject в bridge.py. 270 тестов, все зелёные.
+- **Решения:** Ruff-хук снимает неиспользуемые импорты после каждого Edit — добавлять import и использование в одном edit.
+- **Наблюдения:** visual_enrichment — no-op без inject → безопасно деплоить.
 
 ### 2026-05-07
 
