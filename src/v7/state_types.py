@@ -36,6 +36,7 @@ class ScoredDoc(Doc):
 Intent = Literal["noise", "domain"]
 TriageCategory = Literal["sufficient", "borderline", "clearly_bad"]
 VerifierVerdict = Literal["sufficient", "rewrite", "escalate"]
+EvidenceVerdict = Literal["answer", "improve", "abstain"]
 
 NextAfterIntent = Literal["end", "router"]
 NextAfterRouter = Literal["rag_simple", "clarify_respond"]
@@ -134,6 +135,17 @@ class SufficiencyResult(TypedDict):
     max_doc_ratio: float
 
 
+class EvidenceReport(TypedDict, total=False):
+    """V8 evidence assessment report from _evidence_assess."""
+
+    verdict: EvidenceVerdict
+    reranker_top1: float
+    reranker_top3_mean: float
+    coverage_estimate: float
+    kw_overlap: float
+    passage_count: int
+
+
 class VerificationResult(TypedDict, total=False):
     """Результат LLM-верификации.
 
@@ -181,5 +193,6 @@ class RAGState(TypedDict, total=False):
     abstain_reason: str
     sufficiency_details: SufficiencyResult
     answer: str  # synthesised LLM answer (set by generate_answer node)
+    evidence_report: EvidenceReport  # V8 evidence assessment; populated only when V8_ENABLE_EVIDENCE_ASSESS=True
     # UX
     status_message: str

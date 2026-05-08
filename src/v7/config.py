@@ -66,5 +66,13 @@ class V7Config(BaseSettings):
         "you are now",
     ]
 
+    # ── V8 Evidence Assess ─────────────────────────────────────────────────
+    V8_ENABLE_EVIDENCE_ASSESS: bool = False
+    V8_EVIDENCE_ANSWER_RERANKER_TOP1: float = 0.6
+    V8_EVIDENCE_ANSWER_COVERAGE: float = 0.6
+    V8_EVIDENCE_ABSTAIN_RERANKER_TOP1: float = 0.2
+    V8_EVIDENCE_ABSTAIN_COVERAGE: float = 0.2
+    V8_SIMPLE_RERANK_TOP_K: int = 5
+
 
 v7_config = V7Config()

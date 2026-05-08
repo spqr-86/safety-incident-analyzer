@@ -342,13 +342,14 @@ def init_v7_from_chroma(vector_store, llm_provider: str | None = "gemini") -> No
     except Exception as exc:
         logger.warning("Failed to initialize section fetch for v7: %s.", exc)
 
-    # Inject FlashRank reranker for complex path
+    # Inject FlashRank reranker for complex path and V8 evidence assess (simple path)
     try:
         rerank_fn = make_rerank_fn(
             model_name=settings.RERANKING_MODEL,
             cache_dir=settings.FLASHRANK_CACHE_DIR,
         )
         rag_complex_mod.set_rerank_fn(rerank_fn)
+        rag_simple_mod.set_reranker(rerank_fn)
         logger.info("v7 FlashRank reranker injected successfully")
     except Exception as exc:
         logger.warning(
