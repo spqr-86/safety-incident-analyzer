@@ -7,30 +7,28 @@
 ### `baseline.json`
 Baseline метрики для текущей production версии системы. Используется для сравнения новых версий.
 
-**Формат:**
+**Актуальный конфиг (май 2026, V7 pipeline):**
 ```json
 {
-  "date": "2025-12-14",
-  "version": "v1.0.0",
+  "date": "2026-05-07",
+  "version": "V7 (stage 6)",
   "dataset": "golden-questions",
-  "dataset_size": 16,
+  "dataset_size": 41,
   "config": {
-    "llm_provider": "gigachat",
-    "llm_model": "GigaChat",
+    "pipeline": "v7_langgraph",
+    "llm_provider": "gemini",
+    "llm_model": "gemini-3-flash-preview",
+    "thinking_budget": 4096,
     "embedding_provider": "openai",
     "embedding_model": "text-embedding-3-small",
     "chunk_size": 1200,
     "chunk_overlap": 150,
-    "vector_search_k": 10,
-    "hybrid_weights": [0.6, 0.4]
+    "vector_search_k": 40,
+    "hybrid_weights": [0.5, 0.5],
+    "evaluate_complex_top_k": 24
   },
   "metrics": {
-    "correctness_score": 7.5,
-    "faithfulness_score": 0.85,
-    "answer_relevance_score": 0.82,
-    "citation_rate": 0.95,
-    "mean_total_time": 8.5,
-    "p95_total_time": 12.0
+    "note": "Baseline eval не запускался на V7. Требуется: python eval/run_v7_eval.py"
   }
 }
 ```

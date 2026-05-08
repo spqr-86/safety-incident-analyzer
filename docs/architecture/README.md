@@ -2,34 +2,36 @@
 
 ## ⚡ TL;DR
 
-**Что это:** RAG-система с мульти-агентным контролем качества (LangGraph), гибридным поиском (Chroma + BM25 + FlashRank) и ReAct-агентами с thinking levels.
+**Что это:** RAG-система для поиска по нормативным документам (ГОСТ, ТК РФ, приказы). Основной режим — V7 LangGraph Pipeline с детерминированным графом и Gemini-генерацией. MAS и Simple RAG — legacy.
 
 **Топ-3 команды:**
-1. `python index.py` — индексация документов
-2. `streamlit run app.py` — запуск интерфейса
-3. `pytest` — запуск тестов
+1. `python index.py` — индексация документов (DESTRUCTIVE)
+2. `streamlit run app.py --server.port 8502` — запуск интерфейса
+3. `pytest` — запуск тестов (166 штук)
 
-**Ключевые файлы:** `agents/multiagent_rag.py`, `src/final_chain.py`, `config/term_glossary.yaml`, `index.py`
+**Ключевые файлы:** `src/v7/graph.py`, `src/v7/bridge.py`, `src/v7/nodes/`, `config/term_glossary.yaml`, `index.py`
 
 ---
 
 ## ⚙️ Как это работает
 
-Система использует **LangGraph** для оркестрации агентов. Три подхода (выбираются в UI):
+Система использует **LangGraph** для оркестрации. Три режима (выбираются в UI, V7 — основной):
 
-1. **Multi-Agent RAG** (`agents/multiagent_rag.py`) — основной подход с ReAct-агентами. Подробнее ниже.
-2. **V7 Pipeline** (`src/v7/`) — новый детерминированный RAG-граф: intent gate → router → hybrid retrieval → hard-gate triage → LLM verifier → rewriter. Bridge (`src/v7/bridge.py`) инжектит ChromaDB-поиск и Gemini LLM в ноды через DI.
-3. **Simple RAG Chain** (`src/final_chain.py`) — legacy fallback: гибридный поиск → FlashRank rerank → LLM.
+1. **V7 Pipeline** (`src/v7/`) — основной: детерминированный граф без LLM-роутинга. Bridge (`src/v7/bridge.py`) инжектит ChromaDB и Gemini через DI.
+2. **Multi-Agent RAG** (`agents/multiagent_rag.py`) — legacy: ReAct-агенты с thinking levels и верификатором.
+3. **Simple RAG Chain** (`src/final_chain.py`) — legacy fallback: гибридный поиск → FlashRank → LLM.
 
-### Основные этапы (Multi-Agent RAG)
+### Основные этапы (V7 Pipeline)
 
 | Step | Component | Action |
 |------|-----------|--------|
-| 1. Ingestion | `index.py` | Загрузка и индексация документов в ChromaDB. См. [DATA_PIPELINE.md](../DATA_PIPELINE.md) |
-| 2. Term Expansion | `config/term_glossary.yaml` | Детерминированная расшифровка доменных сокращений (программа А → официальный термин) |
-| 3. Filter | `agents/multiagent_rag.py` | Regex-фильтр классифицирует запрос → chitchat / out_of_scope / rag (без LLM) |
-| 4. Search & Answer | RAG Agent (ReAct) | Единый агент с `search_documents` + `visual_proof`, условная декомпозиция |
-| 5. Verification | Verifier | Проверка по 6 критериям (JSON), ревизия при необходимости (макс 1) |
+| 1. Ingestion | `index.py` | PDF/DOCX → Docling → chunking → OpenAI embeddings → ChromaDB. См. [DATA_PIPELINE.md](../DATA_PIPELINE.md) |
+| 2. Term Expansion | `config/term_glossary.yaml` | Детерминированная расшифровка сокращений ("программа А" → официальный термин) |
+| 3. Intent Gate | `src/v7/nodes/intent_gate.py` | Regex-классификация: noise / domain. Без LLM |
+| 4. RAG Simple | `src/v7/nodes/rag_simple.py` | Hybrid retrieval K=40 + FlashRank rerank. При высоком score → сразу generate |
+| 5. RAG Complex | `src/v7/nodes/rag_complex.py` | BM25 expansion, merge всех попыток top_k=24 |
+| 6. Evaluate Complex | `src/v7/nodes/evaluate_complex.py` | Hard gates по score-порогам. Без LLM |
+| 7. Generate Answer | `src/v7/nodes/generate_answer.py` | Gemini Flash (thinking_budget=4096) синтезирует ответ |
 
 ---
 
@@ -96,15 +98,16 @@ streamlit run app.py     # Запуск UI
 
 ### Типовые задачи
 
-**Хочу понять [RAG]:**
-Изучите `src/final_chain.py`, чтобы разобраться в механике поиска и генерации.
+**Хочу понять [RAG pipeline]:**
+Изучите `src/v7/graph.py` (сборка графа) и `src/v7/nodes/` (отдельные ноды).
 
-**Хочу понять [Agents]:**
-Смотрите `agents/multiagent_rag.py` для понимания графа переходов состояний.
+**Хочу понять [retrieval]:**
+`src/v7/nodes/rag_simple.py`, `src/v7/nlp_core.py` (BM25, merge), `src/v7/hard_gates.py` (пороги).
 
-**Добавить новую фичу:**
-1. Создайте нового агента в `agents/`.
-2. Добавьте узел (node) в граф в `agents/multiagent_rag.py`.
+**Добавить новую ноду:**
+1. Создайте `src/v7/nodes/<name>.py` — тонкий оркестратор (read state → call function → write state).
+2. Добавьте в `src/v7/graph.py`.
+3. Логику — в `src/v7/nlp_core.py` или `src/v7/hard_gates.py`.
 
 **Исправить ошибку:**
 1. Проверьте логи ошибок в `analysis/error_reports`.
@@ -117,6 +120,7 @@ streamlit run app.py     # Запуск UI
 См. [testing.md](../guides/testing.md) для инструкции по проверке ссылок и актуальности.
 
 ### Развертывание (Deploy)
+- **VPS (текущий):** http://213.176.64.237:8502, tmux session `sia`, WARP proxy для Gemini API
 - **Streamlit Cloud:** Подключите репозиторий GitHub и укажите `app.py`.
 - **Docker:** Используйте `Dockerfile` для контейнеризации.
 
@@ -129,7 +133,7 @@ streamlit run app.py     # Запуск UI
 | `agents/` | Логика мульти-агентных систем: `multiagent_rag.py` (ReAct-агенты с LangGraph). |
 | `prompts/` | Централизованное хранилище промптов (Jinja2) и реестр версий (`registry.yaml`). |
 | `src/` | Ядро RAG-логики: цепочки (`final_chain.py`), работа с векторной БД (`vector_store.py`), фабрики LLM (`llm_factory.py`). |
-| `src/v7/` | V7 pipeline: детерминированный RAG-граф с LangGraph (intent → router → retrieval → triage → verifier → rewriter). |
+| `src/v7/` | **Основной** V7 pipeline: детерминированный граф (intent_gate → rag_simple → rag_complex → evaluate_complex → generate_answer). |
 | `config/` | Настройки приложения (`settings.py`) и доменный глоссарий (`term_glossary.yaml`). |
 | `eval/` | Скрипты для оценки качества ответов (DeepEval, Ragas). |
 | `tests/` | Юнит и интеграционные тесты. |
@@ -196,14 +200,13 @@ flowchart TD
 | `bridge.py` | DI-адаптер: ChromaDB + Gemini → v7 pipeline |
 
 ### Known Issues / TODO
-- [ ] Оптимизация скорости FlashRank (задержка на CPU).
-- [x] Улучшение обработки таблиц в PDF документах (visual_proof с VLM).
-- [ ] Добавление памяти диалога (Chat History) в LangGraph.
-- [x] Расширение набора тестов для агентов (27 тестов для Multi-Agent RAG).
-- [ ] Калибровка thinking budget (8192/1024) под реальные запросы.
-- [x] Доменный глоссарий для детерминированной расшифровки сокращений.
-- [ ] Логирование промахов глоссария для итеративного пополнения.
-- [x] V7 pipeline с детерминированным графом и LLM verifier/rewriter через DI bridge.
+- [ ] **[P0]** Retry при Gemini 503 — `bridge.py make_generate_fn` сразу падает в stub. Нужен tenacity retry (3 попытки, 2→4→8 сек).
+- [ ] FlashRank score inflation в evaluate_complex — cross-encoder вероятности ~0.999, порог COMPLEX_THRESHOLD=0.35 всегда проходит. Нужно сортировать по FlashRank, threshold считать по vector_score.
+- [ ] Добавить Chat History в LangGraph (диалоговая память).
+- [x] V7 pipeline: intent_gate → rag_simple → rag_complex → evaluate_complex → generate_answer.
+- [x] evaluate_complex: top_k=24 (было 12) — полные ответы по составным вопросам.
+- [x] Доменный глоссарий, stem-based matching для русской морфологии.
+- [x] 166 unit-тестов.
 
 ### Prompt Management System
 
