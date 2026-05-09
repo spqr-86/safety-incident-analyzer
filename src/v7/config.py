@@ -74,5 +74,9 @@ class V7Config(BaseSettings):
     V8_EVIDENCE_ABSTAIN_COVERAGE: float = 0.2
     V8_SIMPLE_RERANK_TOP_K: int = 5
 
+    # ── V8 Multi-Query Expand ───────────────────────────────────────────────
+    V8_ENABLE_MULTI_QUERY: bool = False
+    V8_EXPAND_N: int = 3  # number of query reformulations to generate
+
 
 v7_config = V7Config()

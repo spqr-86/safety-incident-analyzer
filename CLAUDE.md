@@ -19,7 +19,7 @@ source venv/bin/activate   # before any command
 - **URL:** http://213.176.64.237:8502
 - **Port:** 8502 (UFW opened), tmux session `sia` (attach: `tmux a -t sia`)
 - **Start:** `cd /home/petr/projects/safety-incident-analyzer && source venv/bin/activate && streamlit run app.py --server.port 8502`
-- **Indexed docs:** 7 PDFs (2464н, ТК РФ, СОУТ, ПБ и др.) → 749 chunks, collection `documents` в `chroma_db_openai/`
+- **Indexed docs:** 8 PDFs (2464н, ТК РФ, СОУТ, ПБ, 776н и др.) → 830 chunks, collection `documents` в `chroma_db_openai/`
 
 **VPS env requirements:**
 - `HTTPS_PROXY=socks5h://localhost:40000` + `HTTP_PROXY=socks5h://localhost:40000` — WARP proxy для Gemini (VPS AEZA заблокирован по ASN)
@@ -143,6 +143,12 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ---
 
 ## Session Log
+
+### 2026-05-09 (сессия 13)
+
+- **Сделано:** V8 Epic 3 Multi-Query Expand (make_expand_fn, set_expand_fn DI, RRF слияние, 7 тестов). Eval: +0.000 completeness — retrieval не bottleneck. Добавлен 776н (СУОТ) в corpus, переиндексировано 749→830 чанков, completeness 0.567→0.589. Датасет очищен 38→36 (удалены Q34 ПБ склад, Q35 вентиляция как OOS). Промпт генерации v2: 14 проблем исправлено (роль убрана, 3 варианта ответа, HIGH/MED/LOW score, дословные цитаты, обязательные ссылки, противоречия без приоритизации). Decision log: docs/plans/2026-05-09-generate-prompt-v2.md.
+- **Решения:** Retrieval работает (16+ фрагментов находятся) — bottleneck в generation. Multi-query expand нейтрален на stub LLM. Corpus gaps важнее всего — 776н дал +0.023. Роль "эксперта" в промпте провоцирует достройку из общих знаний — заменена на "отвечаешь СТРОГО на основе фрагментов".
+- **Наблюдения:** gemini-3-flash → 404 (нестабильна). Все eval — на stub. Нужна gemini-2.5-flash для честного eval. Промпт v2 не оценён с реальным LLM. Corpus: 830 чанков, dataset: 36 вопросов.
 
 ### 2026-05-08 (сессия 12)
 

@@ -312,7 +312,8 @@ class TestInitV7FromChroma:
         mock_verifier.set_verify_fn.assert_called_once()
         mock_rewriter.set_rewrite_fn.assert_called_once()
         mock_generate.set_generate_fn.assert_called_once()
-        assert mock_get_llm.call_count == 3
+        # 4 LLM instances: verifier, rewriter, generator, expander
+        assert mock_get_llm.call_count == 4
 
     @pytest.mark.unit
     @patch("src.v7.bridge.get_gemini_llm", side_effect=ImportError("no gemini"))
