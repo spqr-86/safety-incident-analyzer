@@ -144,6 +144,12 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 
 ## Session Log
 
+### 2026-05-11 (сессия 14)
+
+- **Сделано:** Eval на gemini-2.5-flash: V7=0.614, V8_promptv2=0.611. Промпт v2 нейтрален по completeness но снизил false_abstain 0.057→0.029 (-50%). FastAPI api.py создан (порт 8503, POST /query + GET /health, lifespan init). fastapi+uvicorn+structlog добавлены в requirements.txt. V8 Epic 4 план сохранён: docs/plans/2026-05-11-eval-improvements.md.
+- **Решения:** completeness 0.61 = потолок corpus coverage (нет Приказа 223н по НС, нет КоАП). Eval через леммы не ловит инверсии — нужен negative_keywords. Citation validity не измеряется — разрыв между промптом v2 и eval.
+- **Наблюдения:** OOS detection = 1.0 (идеально). False abstain = 0.029 (хорошо). Система работает, bottleneck — corpus и eval metrics, не retrieval/generation.
+
 ### 2026-05-09 (сессия 13)
 
 - **Сделано:** V8 Epic 3 Multi-Query Expand (make_expand_fn, set_expand_fn DI, RRF слияние, 7 тестов). Eval: +0.000 completeness — retrieval не bottleneck. Добавлен 776н (СУОТ) в corpus, переиндексировано 749→830 чанков, completeness 0.567→0.589. Датасет очищен 38→36 (удалены Q34 ПБ склад, Q35 вентиляция как OOS). Промпт генерации v2: 14 проблем исправлено (роль убрана, 3 варианта ответа, HIGH/MED/LOW score, дословные цитаты, обязательные ссылки, противоречия без приоритизации). Decision log: docs/plans/2026-05-09-generate-prompt-v2.md.

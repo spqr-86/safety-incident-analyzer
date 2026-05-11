@@ -41,3 +41,8 @@ python-dotenv
 Jinja2
 PyYAML
 Pillow
+
+# API server
+fastapi>=0.111
+uvicorn[standard]>=0.29
+structlog>=24.0
