@@ -41,22 +41,28 @@ except ImportError:
 
 from eval.metrics import (
     compute_abstain_rate,
+    compute_citation_doc_match,
+    compute_citation_in_retrieval,
+    compute_citation_rate,
     compute_completeness,
     compute_correct_abstain_rate,
     compute_false_abstain_rate,
+    compute_inversion_detected,
+    compute_inversion_rate,
     compute_retrieval_stats,
 )
 
 DATASET_PATH = Path(__file__).parent.parent / "tests" / "dataset.csv"
 BASELINES_DIR = Path(__file__).parent / "baselines"
 
-# Маркеры OOS-запросов в dataset.csv (by substring match в вопросе)
-_OOS_MARKERS = ["борщ", "рецепт", "погода", "курс доллара", "приготовить"]
 
+def _is_oos(oos_type: str) -> bool:
+    """True если вопрос out_of_scope (система должна отказать).
 
-def _is_oos(question: str) -> bool:
-    q = question.lower()
-    return any(marker in q for marker in _OOS_MARKERS)
+    false_premise — отдельная категория: система должна ответить с коррекцией предпосылки,
+    поэтому НЕ считается OOS для метрики correct_abstain_rate.
+    """
+    return oos_type == "out_of_scope"
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
@@ -72,12 +78,15 @@ def load_dataset(path: Path) -> list[dict]:
             if not q:
                 print(f"  [SKIP] Row {i}: empty question")
                 continue
+            oos_type = row.get("oos_type", "").strip()
             rows.append(
                 {
                     "row_num": i,
                     "question": q,
                     "ground_truth": gt,
-                    "is_oos": _is_oos(q),
+                    "oos_type": oos_type,
+                    "is_oos": _is_oos(oos_type),
+                    "must_not_contain": row.get("must_not_contain", "").strip(),
                 }
             )
     return rows
@@ -110,6 +119,7 @@ def run_query(graph: Any, question: str) -> dict:
         "elapsed_sec": elapsed,
         "top_score": top_score,
         "passage_count": len(final_passages),
+        "final_passages": final_passages,
     }
 
 
@@ -139,7 +149,10 @@ def run(
     if limit:
         dataset = dataset[:limit]
     oos_count = sum(1 for r in dataset if r["is_oos"])
-    print(f"  {len(dataset)} questions ({oos_count} OOS)\n")
+    fp_count = sum(1 for r in dataset if r.get("oos_type") == "false_premise")
+    print(
+        f"  {len(dataset)} questions ({oos_count} out_of_scope, {fp_count} false_premise)\n"
+    )
 
     if no_pipeline:
         print("--no-pipeline: skipping graph execution")
@@ -175,7 +188,13 @@ def run(
             continue
 
         answer = run_result["answer"]
+        passages = run_result["final_passages"]
         completeness = compute_completeness(ground_truth, answer)
+        must_not_contain = item.get("must_not_contain", "")
+        inversion = compute_inversion_detected(must_not_contain, answer)
+        cit_rate = compute_citation_rate(answer)
+        cit_in_ret = compute_citation_in_retrieval(answer, passages)
+        cit_doc_match = compute_citation_doc_match(answer, passages)
 
         record = {
             **item,
@@ -186,6 +205,10 @@ def run(
             "passage_count": run_result["passage_count"],
             "completeness": round(completeness, 4),
             "abstained": not bool(answer.strip()),
+            "inversion_detected": inversion,
+            "citation_rate": round(cit_rate, 4),
+            "citation_in_retrieval": round(cit_in_ret, 4),
+            "citation_doc_match": round(cit_doc_match, 4),
         }
         results.append(record)
 
@@ -214,6 +237,7 @@ def run(
     )
 
     retrieval_stats = compute_retrieval_stats(results)
+    latency_stats = _compute_latency_stats(results)
 
     summary = {
         "label": label,
@@ -227,7 +251,28 @@ def run(
             "abstain_rate": round(compute_abstain_rate(results), 4),
             "false_abstain_rate": round(compute_false_abstain_rate(results), 4),
             "correct_abstain_rate": round(compute_correct_abstain_rate(results), 4),
+            "inversion_rate": round(compute_inversion_rate(results), 4),
+            "citation_rate_mean": round(
+                sum(r.get("citation_rate", 0.0) for r in answered) / len(answered)
+                if answered
+                else 0.0,
+                4,
+            ),
+            "citation_in_retrieval_mean": round(
+                sum(r.get("citation_in_retrieval", 0.0) for r in answered)
+                / len(answered)
+                if answered
+                else 0.0,
+                4,
+            ),
+            "citation_doc_match_mean": round(
+                sum(r.get("citation_doc_match", 0.0) for r in answered) / len(answered)
+                if answered
+                else 0.0,
+                4,
+            ),
             **retrieval_stats,
+            **latency_stats,
         },
         "results": results,
     }
@@ -250,6 +295,24 @@ def run(
     print(
         f"  Correct abstain (OOS):     {m['correct_abstain_rate']:.3f}  (target = 1.0)"
     )
+    print(
+        f"  Inversion rate:            {m['inversion_rate']:.3f}  (target = 0, checked {sum(1 for r in results if r.get('must_not_contain', '').strip())} rows)"
+    )
+    print(
+        f"  Citation rate:             {m['citation_rate_mean']:.3f}  (% sentences with citation)"
+    )
+    print(
+        f"  Citation in retrieval:     {m['citation_in_retrieval_mean']:.3f}  (target = 1.0)"
+    )
+    print(
+        f"  Citation doc match:        {m['citation_doc_match_mean']:.3f}  (informative)"
+    )
+    print(f"  Latency p50:               {m['latency_p50']:.1f}s")
+    print(
+        f"  Latency p95:               {m['latency_p95']:.1f}s  (informative, n={len(results)})"
+    )
+    print(f"  Latency max:               {m['latency_max']:.1f}s")
+    print(f"  Latency >10s:              {m['latency_count_over_10s']} queries")
     print(f"  Avg top_score:             {m['avg_top_score']:.4f}")
     print(f"  Avg passage_count:         {m['avg_passage_count']:.1f}")
 
@@ -260,6 +323,27 @@ def run(
         print(f"\nSaved → {output}")
 
     return summary
+
+
+def _compute_latency_stats(results: list[dict]) -> dict:
+    """Latency статистика по всем запросам."""
+    latencies = sorted(r.get("elapsed_sec", 0.0) for r in results if "error" not in r)
+    if not latencies:
+        return {
+            "latency_p50": 0.0,
+            "latency_p95": 0.0,
+            "latency_max": 0.0,
+            "latency_count_over_10s": 0,
+        }
+    n = len(latencies)
+    p50 = latencies[int(n * 0.50)]
+    p95 = latencies[min(int(n * 0.95), n - 1)]
+    return {
+        "latency_p50": round(p50, 2),
+        "latency_p95": round(p95, 2),
+        "latency_max": round(latencies[-1], 2),
+        "latency_count_over_10s": sum(1 for t in latencies if t > 10.0),
+    }
 
 
 def _is_enumeration(question: str) -> bool:

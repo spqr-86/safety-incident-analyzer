@@ -144,6 +144,12 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 
 ## Session Log
 
+### 2026-05-12 (сессия 17)
+
+- **Сделано:** V8 Epic 4 полностью завершён. Task 1c: `must_not_contain` в датасете (14 строк), `compute_inversion_detected/rate` в metrics.py. Task 1e: latency p50/p95/max/count_over_10s. Task 1a: `parse_citations`, `compute_citation_rate/in_retrieval/doc_match`, `run_query` возвращает `final_passages`. Task 1b: датасет 36→50 (oos_type: 10 out_of_scope + 5 false_premise). Fix: generate prompt передаёт `[Источник: ...]` для каждого пассажа (bridge.py `_short_source`). 33 новых теста, 221 всего.
+- **Решения:** inversion_detected = substring match — false positives возможны, принято как baseline. Для false_premise вопросов is_oos=False (система должна корректировать, не молчать). Стратегия ruff imports: usage-код добавлять ДО импортов.
+- **Наблюдения:** citation_doc_match был 0 т.к. LLM не знал источников — исправлено. Corpus gaps: Приказ 223н (НС), КоАП ст.5.27.1, ПП 1479 — нужны для completeness > 0.65. Eval с реальным LLM ещё не запущен.
+
 ### 2026-05-11 (сессия 14)
 
 - **Сделано:** Eval на gemini-2.5-flash: V7=0.614, V8_promptv2=0.611. Промпт v2 нейтрален по completeness но снизил false_abstain 0.057→0.029 (-50%). FastAPI api.py создан (порт 8503, POST /query + GET /health, lifespan init). fastapi+uvicorn+structlog добавлены в requirements.txt. V8 Epic 4 план сохранён: docs/plans/2026-05-11-eval-improvements.md.

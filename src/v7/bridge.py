@@ -352,12 +352,20 @@ def make_generate_fn(llm) -> Callable[[str, str, List[dict]], str]:
             return "MED"
         return "LOW"
 
+    def _short_source(passage: dict) -> str:
+        """Извлечь короткое название документа из metadata.source."""
+        raw = passage.get("metadata", {}).get("source", "")
+        # "Трудовой кодекс РФ - Система Охрана труда. Премиальная версия.pdf"
+        # → "Трудовой кодекс РФ"
+        name = raw.split(" - ")[0].replace(".pdf", "").strip()
+        return name or "Неизвестный источник"
+
     def _generate(query: str, active_query: str, passages: List[dict]) -> str:
         if not passages:
             return ""
         top_passages = passages[:15]
         passages_text = "\n\n".join(
-            f"[{i + 1}] ({_score_label(p.get('score', 0.0))}) {p.get('text', '')}"
+            f"[{i + 1}] ({_score_label(p.get('score', 0.0))}) [Источник: {_short_source(p)}]\n{p.get('text', '')}"
             for i, p in enumerate(top_passages)
         )
         prompt = (
