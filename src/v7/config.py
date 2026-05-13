@@ -78,5 +78,8 @@ class V7Config(BaseSettings):
     V8_ENABLE_MULTI_QUERY: bool = False
     V8_EXPAND_N: int = 3  # number of query reformulations to generate
 
+    # ── Domain Gate ───────────────────────────────────────────────────────
+    DOMAIN_GATE_THRESHOLD: float = 0.0  # cosine similarity floor; 0.0 = disabled
+
 
 v7_config = V7Config()
