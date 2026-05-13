@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+from src.v7.config import v7_config
+from src.v7.domain_gate import is_in_domain
 from src.v7.state_types import NextAfterIntent, RAGState
 
 # ── Chitchat / noise patterns ──────────────────────────────────────────────
@@ -73,10 +75,26 @@ def _is_noise(q: str) -> bool:
 
 
 def intent_gate(state: RAGState) -> RAGState:
-    """Reads: query. Writes: intent ('noise' | 'domain')."""
+    """Reads: query. Writes: intent ('noise' | 'domain').
+
+    Steps:
+    1. Regex noise check (chitchat, greetings, farewells).
+    2. Domain gate: cosine similarity of query embedding to corpus centroid.
+       Only active when DOMAIN_GATE_THRESHOLD > 0.
+    """
     q = (state.get("query") or "").strip()
     if _is_noise(q):
         return {"intent": "noise"}
+
+    threshold = v7_config.DOMAIN_GATE_THRESHOLD
+    if threshold > 0.0:
+        from src.llm_factory import get_embedding_model
+
+        embedding_model = get_embedding_model()
+        query_embedding = embedding_model.embed_query(q)
+        if not is_in_domain(query_embedding, threshold):
+            return {"intent": "noise"}
+
     return {"intent": "domain"}
 
 
