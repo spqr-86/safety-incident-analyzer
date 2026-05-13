@@ -19,7 +19,7 @@ source venv/bin/activate   # before any command
 - **URL:** http://213.176.64.237:8502
 - **Port:** 8502 (UFW opened), tmux session `sia` (attach: `tmux a -t sia`)
 - **Start:** `cd /home/petr/projects/safety-incident-analyzer && source venv/bin/activate && streamlit run app.py --server.port 8502`
-- **Indexed docs:** 8 PDFs (2464н, ТК РФ, СОУТ, ПБ, 776н и др.) → 830 chunks, collection `documents` в `chroma_db_openai/`
+- **Indexed docs:** 8 PDFs → 830 chunks (VPS, не обновлено). Локально source_docs: +223н, +КоАП ст.5.27.1. Нужно scp + python index.py на VPS.
 
 **VPS env requirements:**
 - `HTTPS_PROXY=socks5h://localhost:40000` + `HTTP_PROXY=socks5h://localhost:40000` — WARP proxy для Gemini (VPS AEZA заблокирован по ASN)
@@ -143,6 +143,12 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ---
 
 ## Session Log
+
+### 2026-05-13 (сессия 18)
+
+- **Сделано:** Ориентация по состоянию проекта. Подтверждено: Приказ 223н + КоАП ст.5.27.1 уже в source_docs локально. ПП 1479 — сервер rostransnadzor.gov.ru не отвечает с нашего IP, пока без него.
+- **Решения:** Corpus переиндексировать через scp + python index.py на VPS (SSH с этой машины не работает).
+- **Наблюдения:** Indexed docs на VPS не обновлены — 8 PDFs без новых документов. SSH с VPS-сессии Claude → другой VPS не работает (разные ключи).
 
 ### 2026-05-12 (сессия 17)
 
