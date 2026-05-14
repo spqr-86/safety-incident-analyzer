@@ -28,6 +28,7 @@ source venv/bin/activate   # before any command
 ## Known Issues
 
 - ~~**Gemini 503 → stub fallback**~~ ✅ Fixed 2026-05-08: tenacity retry (3 attempts, exp backoff 2→4→8s), fallback to stub only after all retries.
+- **P1** Баг чанкинга в `src/file_handler.py` (`_process_docling_document`) выроняет целые пункты норм из индекса (напр. «Повторный инструктаж проводится не реже 1 раза в 6 месяцев» есть в PDF 2464 и чисто извлекается Docling, но в ChromaDB его нет). Прямо ограничивает eval correctness. Нужен дебаг группировки + переиндексация (index.py destructive). — см. backlog.md
 - **P1** `app.py` не читает `result["answer"]` — см. backlog.md
 - **P2** FlashRank score inflation в evaluate_complex — см. backlog.md
 

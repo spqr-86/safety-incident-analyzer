@@ -132,7 +132,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 - **Versioning:** Controlled via `registry.yaml` or environment variables.
 
 ### Key Workflows
-- **Term Glossary:** `config/term_glossary.yaml` handles domain abbreviations (e.g., "программа А"). It is applied *before* the router.
+- **Term Glossary:** `config/term_glossary.yaml` handles domain abbreviations (e.g., "программа А"). Expansion logic lives in `src/glossary.py` (`expand_query_with_glossary`). Applied in the V7 `router` node (writes the expanded `active_query`); the legacy `multiagent_rag` applies it before its router.
 - **Visual Proof:** The system extracts images from PDFs (`static/visuals/`) to prove answers.
 - **Search Optimization:** Agent search bypasses FlashRank reranking for speed (k=10). BM25 index is cached.
 
