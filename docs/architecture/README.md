@@ -9,7 +9,7 @@
 **Топ-3 команды:**
 1. `python index.py` — индексация документов (DESTRUCTIVE)
 2. `streamlit run app.py --server.port 8502` — запуск интерфейса
-3. `pytest` — запуск тестов (166 штук)
+3. `pytest` — запуск тестов
 
 **Ключевые файлы:** `src/v7/graph.py`, `src/v7/bridge.py`, `src/v7/nodes/`, `config/term_glossary.yaml`, `index.py`
 
@@ -28,18 +28,19 @@
 | Step | Component | Action |
 |------|-----------|--------|
 | 1. Ingestion | `index.py` | PDF/DOCX → Docling → chunking → OpenAI embeddings → ChromaDB. См. [DATA_PIPELINE.md](../DATA_PIPELINE.md) |
-| 2. Term Expansion | `config/term_glossary.yaml` | Детерминированная расшифровка сокращений ("программа А" → официальный термин) |
-| 3. Intent Gate | `src/v7/nodes/intent_gate.py` | Regex-классификация: noise / domain. Без LLM |
-| 4. RAG Simple | `src/v7/nodes/rag_simple.py` | Hybrid retrieval K=40 + FlashRank rerank. При высоком score → сразу generate |
-| 5. RAG Complex | `src/v7/nodes/rag_complex.py` | BM25 expansion, merge всех попыток top_k=24 |
-| 6. Evaluate Complex | `src/v7/nodes/evaluate_complex.py` | Hard gates по score-порогам. Без LLM |
-| 7. Generate Answer | `src/v7/nodes/generate_answer.py` | Gemini Flash (thinking_budget=4096) синтезирует ответ |
+| 2. Intent Gate | `src/v7/nodes/intent_gate.py` | Regex-классификация: noise / domain. noise → END. Без LLM |
+| 3. Router | `src/v7/nodes/router.py` | Классификация запроса, построение `plan`, расширение `active_query` через глоссарий (`src/glossary.py`) |
+| 4. RAG Simple | `src/v7/nodes/rag_simple.py` | Hybrid retrieval `SIMPLE_TOP_K=12` + FlashRank rerank |
+| 5. Evaluate Triage | `src/v7/nodes/evaluate_triage.py` | Hard gates → sufficient / borderline (→ llm_verifier) / clearly_bad (→ rag_complex) |
+| 6. RAG Complex | `src/v7/nodes/rag_complex.py` | Глубокий поиск `COMPLEX_TOP_K=60` + rerank + MMR, merge всех попыток (top 24) |
+| 7. Evaluate Complex | `src/v7/nodes/evaluate_complex.py` | Hard gates по score-порогам. Без LLM |
+| 8. Generate Answer | `src/v7/nodes/generate_answer.py` | Gemini (thinking_budget=4096) синтезирует ответ из `final_passages[:24]` |
 
 ---
 
-## 🤖 Multi-Agent RAG (ReAct-агент)
+## 🤖 Multi-Agent RAG (ReAct-агент) — legacy
 
-Основной подход (`agents/multiagent_rag.py`). Единый RAG Agent — автономный ReAct-агент, который сам решает, когда искать, когда использовать visual_proof и нужна ли декомпозиция.
+Легаси-подход (`agents/multiagent_rag.py`), заменён V7-пайплайном. Единый RAG Agent — автономный ReAct-агент, который сам решает, когда искать, когда использовать visual_proof и нужна ли декомпозиция.
 
 ```mermaid
 flowchart TD
@@ -70,7 +71,7 @@ flowchart TD
 
 ### Потоки данных
 
-- **Term Glossary**: `config/term_glossary.yaml` содержит маппинг неофициальных доменных сокращений → официальные термины. Применяется детерминированно до regex-фильтра. Использует stem-based matching для русской морфологии ("программы А" → матчит "программа а"). Если термин не найден в глоссарии, агент получает инструкцию из BASE_RULES (case 10) для self-service поиска.
+- **Term Glossary**: `config/term_glossary.yaml` содержит маппинг неофициальных доменных сокращений → официальные термины. Логика — в общем модуле `src/glossary.py`. Применяется детерминированно до regex-фильтра. Морфологический матчинг: слова >4 букв по стему, аббревиатуры ≤4 букв — целым словом. Если термин не найден в глоссарии, агент получает инструкцию из BASE_RULES (case 10) для self-service поиска.
 - **Ревизия**: Верификатор возвращает `needs_revision` → агент получает предыдущий `draft_answer` + feedback для точечного исправления
 - **Общие правила**: `prompts/common/base_rules.j2` — макрос с запретами, правилами visual_proof, 10 краевыми случаями (включая интеграцию с глоссарием)
 
@@ -202,13 +203,14 @@ flowchart TD
 | `bridge.py` | DI-адаптер: ChromaDB + Gemini → v7 pipeline |
 
 ### Known Issues / TODO
-- [ ] **[P0]** Retry при Gemini 503 — `bridge.py make_generate_fn` сразу падает в stub. Нужен tenacity retry (3 попытки, 2→4→8 сек).
+- [ ] **[P1]** Баг чанкинга в `src/file_handler.py` (`_process_docling_document`) — выроняет целые пункты норм из индекса. Ограничивает eval correctness. См. `docs/plans/backlog.md`.
 - [ ] FlashRank score inflation в evaluate_complex — cross-encoder вероятности ~0.999, порог COMPLEX_THRESHOLD=0.35 всегда проходит. Нужно сортировать по FlashRank, threshold считать по vector_score.
 - [ ] Добавить Chat History в LangGraph (диалоговая память).
-- [x] V7 pipeline: intent_gate → rag_simple → rag_complex → evaluate_complex → generate_answer.
-- [x] evaluate_complex: top_k=24 (было 12) — полные ответы по составным вопросам.
-- [x] Доменный глоссарий, stem-based matching для русской морфологии.
-- [x] 166 unit-тестов.
+- [x] V7 pipeline: intent_gate → router → rag_simple → evaluate_triage → rag_complex → generate_answer.
+- [x] Retry при Gemini 503 — tenacity (3 попытки, 2→4→8 сек), fallback в stub только после всех ретраев.
+- [x] evaluate_complex: merge top 24 — полные ответы по составным вопросам.
+- [x] Доменный глоссарий (`src/glossary.py`) подключён к V7-роутеру.
+- [x] `max_output_tokens` масштабируется с `thinking_budget` (gemini-3 считает reasoning внутри лимита).
 
 ### Prompt Management System
 

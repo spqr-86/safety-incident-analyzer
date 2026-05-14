@@ -156,11 +156,11 @@ wc -l tests/dataset.csv
 После добавления 5-10 вопросов запустите быструю оценку:
 
 ```bash
-# Оценка только на новых вопросах (укажите --limit)
-python eval/run_full_evaluation.py --limit 10
+# Быстрая оценка (укажите --limit)
+python eval/run_v7_eval.py --limit 10
 
 # Или протестируйте вручную
-python src/app.py
+streamlit run app.py
 ```
 
 В Streamlit UI введите один из новых вопросов и проверьте:
@@ -224,7 +224,7 @@ tests/dataset.csv
 
 1. **Запустить полную оценку:**
    ```bash
-   python eval/run_full_evaluation.py
+   python eval/run_v7_eval.py
    ```
 
 2. **Проверить метрики:**

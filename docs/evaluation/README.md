@@ -1,55 +1,59 @@
 # 📊 Evaluation & Metrics Guide
 
-Система оценки качества RAG-системы в проекте Safety Incident Analyzer.
+Система оценки качества V7-пайплайна.
 
-## 📁 Структура и инструменты
+## Компоненты
 
-Система оценки разделена на три уровня:
-1.  **Датасет (`tests/dataset.csv`)**: "Золотой стандарт" вопросов и ответов (Golden Dataset).
-2.  **Движок оценки (`eval/run_full_evaluation.py`)**: Оркестратор, который запускает тесты и собирает результаты.
-3.  **Метрики (`src/advanced_generation_metrics.py`)**: Набор LLM-судей и алгоритмов для анализа качества.
+1. **Датасет** — `tests/dataset.csv`. Golden-набор, колонки `question` и `ground_truth`
+   (~50 вопросов: in-scope + OOS + false-premise).
+2. **Раннер** — `eval/run_v7_eval.py`. Прогоняет датасет через скомпилированный V7-граф,
+   считает метрики, пишет JSON-отчёт.
+3. **Метрики-судьи** — `src/advanced_generation_metrics.py` (`evaluate_faithfulness`,
+   `evaluate_answer_relevance`) + `evaluate_correctness` внутри раннера. Все три —
+   LLM-as-judge на Gemini (`get_gemini_llm`, та же модель что в `GEMINI_FAST_MODEL`).
 
-### Файлы в папке `eval/`
-- `run_full_evaluation.py` — Полная оценка всей системы.
-- `test_retrieval.py` — Оценка качества поиска (Retrieval).
-- `test_generation.py` — Оценка качества генерации (Generation).
+## Запуск
 
-## 🛠 Как запустить оценку
-
-### Режимы работы
-Скрипт `eval/run_full_evaluation.py` поддерживает два режима:
-- `rag`: Тестирование базовой RAG-цепочки (быстро).
-- `mas`: Тестирование всего многоагентного пайплайна с LangGraph (медленнее, но качественнее).
-
-### Команды
 ```bash
-# Оценка MAS (рекомендуется для v2+)
-python eval/run_full_evaluation.py --mode mas --output benchmarks/eval_mas.jsonl
-
-# Оценка RAG (baseline)
-python eval/run_full_evaluation.py --mode rag --output benchmarks/eval_rag.jsonl
-
-# Ограничение количества вопросов для быстрого теста
-python eval/run_full_evaluation.py --mode mas --limit 5
+source venv/bin/activate
+python eval/run_v7_eval.py                                  # весь датасет
+python eval/run_v7_eval.py --limit 5                        # быстрый smoke-тест
+python eval/run_v7_eval.py --output benchmarks/eval_v7_custom.jsonl
 ```
 
-## 🎯 Ключевые метрики
+CLI: `--limit N` (ограничить число вопросов), `--output PATH` (путь отчёта;
+по умолчанию `benchmarks/eval_v7_{дата}.jsonl`).
 
-| Метрика | Что проверяет | Целевое значение |
+## Метрики
+
+| Метрика | Что проверяет | Цель |
 | :--- | :--- | :--- |
-| **Correctness** | Соответствие ответа эталонному из датасета (0-10) | > 7.5 |
-| **Faithfulness** | Отсутствие галлюцинаций (основан ли ответ на контексте) | > 0.85 |
-| **Answer Relevance** | Насколько ответ соответствует заданному вопросу | > 0.85 |
-| **Citation Quality** | Наличие ссылок на пункты документов | > 0.90 |
-| **Hit Rate @ K** | Нашел ли поиск релевантный чанк в топ-K | > 0.90 |
+| **faithfulness** | Обоснованность — стоит ли ответ на retrieved-контексте (LLM-судья, 0-1) | > 0.85 |
+| **answer_relevance** | Соответствует ли ответ вопросу (LLM-судья, 0-1) | > 0.85 |
+| **correctness_mean** | Соответствие эталону (LLM-судья, 0-10) | > 7.5 |
+| **false_sufficiency_rate** | Доля simple-path ответов с correctness < 5.0 | < 10% |
+| **complex_path_rate** | Доля вопросов, ушедших на complex-путь | — |
+| **mean_elapsed_sec** | Средняя задержка ответа | — |
 
-## 🔬 Принципы реализации (LLM-as-a-Judge)
+`false_sufficiency` ловит главный анти-паттерн: система пошла быстрым путём и
+ответила, хотя ответ плохой.
 
-Мы используем LLM (GigaChat или OpenAI) в качестве "судьи" для оценки качества. Каждая метрика — это отдельный запрос к LLM со специальным промптом.
+## Формат отчёта
 
-**Идея:** Мы заставляем модель-судью не просто дать цифру, а написать `reasoning` (объяснение). Это резко повышает точность оценки. Результаты сохраняются в `benchmarks/results_history.jsonl` и доступны для анализа.
+JSON: `{aggregate, results, dataset_size, valid_results, timestamp}`. `aggregate` —
+агрегированные метрики выше; `results` — список записей по каждому вопросу
+(`question`, `ground_truth`, `answer`, `path`, `*_score`, `*_reasoning`,
+`elapsed_sec`). Reasoning у каждого судьи сохраняется — это резко упрощает разбор
+просадок.
 
-## 📚 Дополнительные материалы
-- [Примеры работы системы оценки](./examples.md)
+## Принцип LLM-as-judge
+
+Каждая метрика — отдельный запрос к модели-судье со своим промптом. Судья обязан
+вернуть не только число, но и `reasoning`. При сравнении прогонов учитывайте
+run-to-run вариативность судьи: мелкие per-question дельты (особенно на OOS-вопросах)
+— шум; доверяйте агрегатам и крупным изменениям.
+
+## Дополнительно
+
 - [Benchmarks и Baseline](./../../benchmarks/README.md)
-- [Руководство по расширению датасета](../guides/adding-questions.md)
+- [Добавление вопросов в датасет](../guides/adding-questions.md)

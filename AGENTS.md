@@ -76,7 +76,7 @@ The project uses `pytest` with configuration in `pyproject.toml`.
 
 - **Evaluation:**
   ```bash
-  python eval/run_full_evaluation.py
+  python eval/run_v7_eval.py
   ```
 
 ## 2. Code Style & Conventions

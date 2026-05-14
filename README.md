@@ -26,8 +26,8 @@
 *   ✅ 🧠 **V7 LangGraph Pipeline**: модульный граф rag_simple → rag_complex → evaluate_complex → generate_answer с детерминированными hard gates.
 *   ✅ ⚖️ **Нормативная точность**: строгая фильтрация — ответ только по подтверждённым фрагментам, abstain при недостаточной уверенности.
 *   ✅ 📄 **Универсальная загрузка**: PDF/DOCX через Docling → chunking → OpenAI embeddings → ChromaDB.
-*   ✅ 📖 **Доменный глоссарий**: детерминированное расширение запросов — "программа А" → официальный термин ещё до поиска.
-*   ✅ 📊 **Eval framework**: LangSmith трассировка, 166 unit-тестов, скрипты для A/B тестирования.
+*   ✅ 📖 **Доменный глоссарий**: детерминированное расширение запросов — "программа А" → официальный термин перед retrieval.
+*   ✅ 📊 **Eval framework**: golden-датасет + LLM-as-judge метрики (faithfulness, correctness, answer relevance) через `eval/run_v7_eval.py`.
 
 ---
 
@@ -38,28 +38,33 @@
 Модульный детерминированный граф без LLM-роутинга:
 
 ```
-query → intent_gate → rag_simple → [sufficient?] → generate_answer
-                               ↓ no
-                          rag_complex → evaluate_complex → generate_answer
-                                                       ↓ fail
-                                                     abstain
+query → intent_gate → router → rag_simple → evaluate_triage ─┬─ sufficient ──→ generate_answer
+                                    ↑                        ├─ borderline ──→ llm_verifier ─┬─→ generate_answer
+                                    └──── rewriter ←──────────┘                              ├─→ rewriter
+                                                              └─ clearly_bad ─→ rag_complex ←┘
+                                                  rag_complex → evaluate_complex ─┬─ pass → generate_answer
+                                                                                  └─ fail → abstain
 ```
 
-1.  **`rag_simple`**: быстрый путь — hybrid retrieval (K=40) + FlashRank rerank. При высокой уверенности сразу идёт на генерацию.
-2.  **`rag_complex`**: глубокий поиск — BM25 расширение запроса, merge всех попыток (top_k=24).
-3.  **`evaluate_complex`**: детерминированные hard gates по score-порогам. Без LLM-вердиктов.
-4.  **`generate_answer`**: синтез ответа через Gemini Flash (thinking_budget=4096). Fallback — сырые чанки при 503.
-5.  **Доменный глоссарий** (`config/term_glossary.yaml`): расширение запросов до поиска, stem-based matching для русской морфологии.
-6.  **Prompt Management**: версионированные Jinja2 шаблоны, registry.yaml, override через env.
+1.  **`intent_gate`**: regex-классификация noise/domain (+ опциональный domain gate). noise → END.
+2.  **`router`**: классификация запроса, построение `plan`, расширение `active_query` через глоссарий.
+3.  **`rag_simple`**: быстрый путь — hybrid retrieval (`SIMPLE_TOP_K=12`) + FlashRank rerank.
+4.  **`evaluate_triage`**: детерминированные hard gates → sufficient / borderline (→ `llm_verifier`) / clearly_bad (→ `rag_complex`).
+5.  **`rag_complex`**: глубокий поиск (`COMPLEX_TOP_K=60`) + rerank + MMR, merge всех попыток (top 24).
+6.  **`evaluate_complex`**: hard gates по score-порогам, без LLM-вердиктов.
+7.  **`generate_answer`**: синтез ответа через Gemini (thinking_budget=4096). Retry при 503, fallback — сырые чанки.
+8.  **Доменный глоссарий** (`src/glossary.py` + `config/term_glossary.yaml`): расширение запросов в ноде `router`.
+
+> V7-промпты (генерация, верификация, rewrite) — хардкод-строки в `src/v7/bridge.py`. Jinja2-реестр промптов (`prompts/`) используется только легаси-путём `multiagent_rag`.
 
 ### 📊 Целевые метрики
 
 | Метрика | Целевое значение | Описание |
 | :--- | :--- | :--- |
-| **Correctness** | > 7.0/10 | Смысловое соответствие эталону |
+| **Correctness** | > 7.5/10 | Смысловое соответствие эталону |
 | **Faithfulness** | > 0.85 | Отсутствие галлюцинаций |
-| **Answer Relevance** | > 0.80 | Соответствие ответа вопросу |
-| **P95 Latency** | < 15s | Скорость ответа (95-й процентиль) |
+| **Answer Relevance** | > 0.85 | Соответствие ответа вопросу |
+| **False-sufficiency** | < 10% | Доля simple-path ответов с низкой correctness |
 
 ---
 
@@ -115,11 +120,10 @@ streamlit run app.py
 ## 📚 Куда идти дальше?
 
 ### 🚀 Для пользователей
-- [**Quick Start: Evaluation & Metrics**](./docs/guides/quick-start.md) — руководство по системе оценки качества.
-- [**Roadmap проекта**](./docs/ROADMAP.md) — дорожная карта развития.
+- [**Quick Start**](./docs/guides/quick-start.md) — установка и первый запуск.
 
 ### 📊 Для аналитиков
-- [**Система оценки и метрики**](./docs/evaluation/README.md) — подробное описание Eval Framework.
+- [**Система оценки и метрики**](./docs/evaluation/README.md) — Eval Framework (`eval/run_v7_eval.py`).
 - [**Benchmarks и Baseline**](./benchmarks/README.md) — результаты тестирования производительности.
 
 ### 🛠 Для разработчиков
@@ -137,21 +141,26 @@ streamlit run app.py
 flowchart TD
     subgraph Ingestion [Индексация]
         Docs[PDF / DOCX] --> Docling[Docling Parser]
-        Docling --> Split[Chunking\n1200 chars / 150 overlap]
+        Docling --> Split[Chunking\n1500 chars / 400 overlap]
         Split --> Embed[OpenAI Embeddings]
         Embed --> DB[(ChromaDB)]
     end
 
     subgraph V7 [V7 LangGraph Pipeline - основной]
-        Q[Вопрос] --> Glossary[Term Glossary\nрасширение аббревиатур]
-        Glossary --> Gate{intent_gate}
-        Gate -->|noise/chitchat| Abstain[abstain]
-        Gate -->|rag| Simple[rag_simple\nhybrid K=40 + FlashRank]
-        Simple -->|sufficient| Gen[generate_answer\nGemini Flash]
-        Simple -->|insufficient| Complex[rag_complex\nBM25 expansion + merge top-24]
+        Q[Вопрос] --> Gate{intent_gate}
+        Gate -->|noise| End[Конец]
+        Gate -->|domain| Router[router\nplan + глоссарий]
+        Router --> Simple[rag_simple\nhybrid SIMPLE_TOP_K=12 + FlashRank]
+        Simple --> Triage{evaluate_triage\nhard gates}
+        Triage -->|sufficient| Gen[generate_answer\nGemini]
+        Triage -->|borderline| Verifier[llm_verifier]
+        Triage -->|clearly_bad| Complex[rag_complex\nCOMPLEX_TOP_K=60 + MMR]
+        Verifier -->|ok| Gen
+        Verifier -->|rewrite| Rewriter[rewriter] --> Simple
+        Verifier -->|escalate| Complex
         Complex --> Eval[evaluate_complex\nhard gates]
         Eval -->|pass| Gen
-        Eval -->|fail| Abstain
+        Eval -->|fail| Abstain[abstain]
         Gen --> Answer[Ответ + источники]
     end
 ```
@@ -175,16 +184,16 @@ flowchart TD
 
 ## 📈 Статус проекта
 
-*   ✅ V7 LangGraph Pipeline (rag_simple → rag_complex → evaluate_complex → generate_answer)
-*   ✅ Hybrid Retrieval (ChromaDB + BM25, K=40, FlashRank rerank)
+*   ✅ V7 LangGraph Pipeline (intent_gate → router → rag_simple → evaluate_triage → rag_complex → generate_answer)
+*   ✅ Hybrid Retrieval (ChromaDB + BM25, `SIMPLE_TOP_K=12` / `COMPLEX_TOP_K=60`, FlashRank rerank)
 *   ✅ Hard gates с детерминированными score-порогами (без LLM-роутинга)
-*   ✅ Генерация ответов — Gemini Flash (thinking_budget=4096)
-*   ✅ Term Glossary — stem-based расшифровка доменных аббревиатур
-*   ✅ Индексация PDF/DOCX через Docling, 7 документов / 749 чанков
+*   ✅ Генерация ответов — Gemini (thinking_budget=4096), retry при 503
+*   ✅ Term Glossary — расшифровка доменных аббревиатур, применяется в ноде `router`
+*   ✅ Индексация PDF/DOCX через Docling, 11 нормативных документов
 *   ✅ Веб-интерфейс Streamlit, задеплоен на VPS (порт 8502)
-*   ✅ 166 unit-тестов, LangSmith трассировка
-*   🔄 Retry при Gemini 503 (backlog P0)
-*   🔄 Расширение тестового датасета (41 → 100 вопросов)
+*   ✅ Eval framework — `eval/run_v7_eval.py`, golden-датасет 50 вопросов, LLM-as-judge
+*   🔄 Баг чанкинга в `_process_docling_document` — выроняет пункты норм из индекса (см. backlog.md)
+*   🔄 Расширение тестового датасета
 
 ---
 
