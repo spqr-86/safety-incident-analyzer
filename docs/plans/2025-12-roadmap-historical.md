@@ -1,5 +1,9 @@
 # 📊 План развития проекта Safety Incident Analyzer
 
+> ⚠️ **HISTORICAL (pre-V7, archived 2026-05-14).** Этот roadmap описывает планы
+> до V7-миграции и легаси Multi-Agent RAG. Сохранён как исторический документ.
+> Актуальное состояние — в `CLAUDE.md` (Session Log) и `docs/plans/backlog.md`.
+
 **Дата создания:** 2025-12-14
 **Последнее обновление:** 2026-02-09
 **Фокус:** Multi-Agent RAG с единым ReAct-агентом, regex-фильтр, thinking levels, Term Glossary
