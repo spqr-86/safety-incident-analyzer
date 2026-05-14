@@ -363,7 +363,9 @@ def make_generate_fn(llm) -> Callable[[str, str, List[dict]], str]:
     def _generate(query: str, active_query: str, passages: List[dict]) -> str:
         if not passages:
             return ""
-        top_passages = passages[:15]
+        # final_passages is already capped at 24 upstream (merge_all_passages);
+        # re-truncating below that drops answer-bearing passages that ranked low.
+        top_passages = passages[:24]
         passages_text = "\n\n".join(
             f"[{i + 1}] ({_score_label(p.get('score', 0.0))}) [Источник: {_short_source(p)}]\n{p.get('text', '')}"
             for i, p in enumerate(top_passages)

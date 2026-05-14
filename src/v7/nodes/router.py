@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from src.glossary import expand_query_with_glossary
 from src.v7.config import v7_config
 from src.v7.hard_gates import validate_filters
 from src.v7.nodes.utils import make_retrieval_id
@@ -92,7 +93,7 @@ def router(state: RAGState) -> RAGState:
     return {
         "plan": plan,
         "retrieval_id": make_retrieval_id(q, validate_filters(filters)),
-        "active_query": q,
+        "active_query": expand_query_with_glossary(q),
         "verify_iteration": 0,
         # State cleanup
         "clarify_message": None,

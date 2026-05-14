@@ -23,3 +23,42 @@ def test_get_llm_unknown_provider_raises():
         mock_settings.LLM_PROVIDER = "unknown_provider"
         with pytest.raises(ValueError, match="unknown_provider"):
             get_llm()
+
+
+@patch("src.llm_factory.ChatGoogleGenerativeAI")
+def test_gemini_llm_max_output_tokens_leaves_answer_room_above_thinking_budget(
+    mock_chat,
+):
+    """max_output_tokens must exceed thinking_budget by an answer allowance.
+
+    gemini-3 counts reasoning tokens inside max_output_tokens. If the cap is at or
+    below thinking_budget, reasoning consumes the whole budget and the answer
+    truncates mid-word.
+    """
+    from src.llm_factory import get_gemini_llm
+
+    mock_chat.return_value = MagicMock()
+    with patch("src.llm_factory.settings") as mock_settings:
+        mock_settings.GEMINI_API_KEY = "test-key"
+        mock_settings.GEMINI_FAST_MODEL = "gemini-3-flash-preview"
+        mock_settings.REQUEST_TIMEOUT = 120.0
+        get_gemini_llm(thinking_budget=4096)
+
+    kwargs = mock_chat.call_args.kwargs
+    assert kwargs["max_output_tokens"] >= 4096 + 2048
+
+
+@patch("src.llm_factory.ChatGoogleGenerativeAI")
+def test_gemini_llm_max_output_tokens_scales_with_thinking_budget(mock_chat):
+    """A smaller thinking_budget still gets an answer allowance on top."""
+    from src.llm_factory import get_gemini_llm
+
+    mock_chat.return_value = MagicMock()
+    with patch("src.llm_factory.settings") as mock_settings:
+        mock_settings.GEMINI_API_KEY = "test-key"
+        mock_settings.GEMINI_FAST_MODEL = "gemini-3-flash-preview"
+        mock_settings.REQUEST_TIMEOUT = 120.0
+        get_gemini_llm(thinking_budget=1024)
+
+    kwargs = mock_chat.call_args.kwargs
+    assert kwargs["max_output_tokens"] >= 1024 + 2048

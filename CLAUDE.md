@@ -124,6 +124,7 @@ Versioned Jinja2 templates. Registry: `prompts/registry.yaml`. Override via env:
 - `make_generate_fn()` в bridge (Gemini, thinking_budget=4096, fallback=stub)
 - `intent_gate`: regex вместо frozenset (корректная фильтрация шума)
 - Тарировка порогов: `HARD_GATE_THRESHOLD=0.50`, `TRIAGE_SOFT_THRESHOLD=0.38` — открыта зона borderline→llm_verifier
+- Domain gate: `V7_DOMAIN_GATE_THRESHOLD=0.25` — pre-retrieval OOS filter по cosine similarity к corpus centroid (src/v7/domain_gate.py)
 - Фикс `top_score` в rag_simple: использует только vector scores (не BM25-inflated)
 - E2E smoke test: `python scripts/trace_v7.py` (цветная трассировка пути + answer)
 - 151 unit-тест, все зелёные
@@ -143,6 +144,22 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ---
 
 ## Session Log
+
+### 2026-05-14 (сессия 20)
+
+- **Сделано:**
+  - **Gemini quota разблокирован.** Причина блокировки eval (free-tier 20 RPD) — Google-side billing misclassification (известный баг: AI Studio показывает Tier 1 · Postpay, а API метрит по `generate_content_free_tier_requests` limit 20). НЕ гео/IP/конфиг — billing-аккаунт здоров (KZ, Paid 1, история списаний). Баг отпустило ~14.05. Eval гоняется на `gemini-3-flash-preview` + ключ проекта sia-prod, 0×429.
+  - **Фикс #0 — max_output_tokens** (`src/llm_factory.py`): gemini-3 считает reasoning-токены ВНУТРИ max_output_tokens; захардкоженный 2048 + thinking_budget=4096 → ответы обрывались на полуслове (28/50). Фикс: `max_output_tokens = thinking_budget + 4096`. TDD. Обрывы 28→1.
+  - **Фикс #2 — глоссарий в V7**: term_glossary.yaml был подключён только к легаси `multiagent_rag.py`, V7-граф его не применял. Вынес в `src/glossary.py`, подключил в `src/v7/nodes/router.py` (расширяет `active_query`). Попутно починен пре-существующий баг `_make_term_pattern`: 4-буквенные аббревиатуры («соут») стеммились в `со\w*` и ловили «состоять» — теперь ≤4 букв матчатся целым словом. TDD.
+  - **Фикс #3 — срез генератора** (`src/v7/bridge.py`): `_generate` резал `final_passages[:15]`, хотя апстрим капит на 24 (`merge_all_passages`). Норма ответа выпадала (наблюдалась на #22). Фикс: `passages[:15]→[:24]`. TDD.
+- **Решения:** Тариф Gemini привязан к billing-аккаунту/проекту, НЕ к IP — IPv6-патч и WARP оба упирались в free-tier (опровергает сессию 19). При сравнении eval-прогонов учитывать run-to-run вариативность LLM-судьи — мелкие per-question дельты на OOS-вопросах = шум.
+- **Наблюдения:** Прогрессия eval (`gemini-3-flash-preview`, 3 прогона): faithfulness 0.927→0.976→**0.996**, correctness 6.04→6.61→**6.86**, in-scope correctness 5.38→6.14→**6.44**, обрывы 28→2→1. correctness всё ещё < цели 7.5 — основной рычаг теперь **Cause #1**: баг чанкинга в `src/file_handler.py` (`_process_docling_document`) выроняет целые пункты норм («Повторный инструктаж проводится не реже 1 раза в 6 месяцев» есть в PDF 2464 и чисто извлекается Docling, но отсутствует в индексе). Требует дебага группировки + переиндексации (index.py destructive). Возможный побочный эффект глоссария на вопросах с терминами (программа А 8→5, СОУТ 5→0) — проверить повторным прогоном. Бенчмарки: `benchmarks/eval_v7_2026-05-14*.jsonl`.
+
+### 2026-05-13 (сессия 19)
+
+- **Сделано:** VPS апгрейд NLs-3 (8GB/4c/120GB/€19.77). Domain gate реализован: `src/v7/domain_gate.py` (corpus centroid cosine similarity), добавлен в `intent_gate.py`. `V7_DOMAIN_GATE_THRESHOLD=0.25` откалиброван. IPv6 monkey-patch в `llm_factory.py` — обход ASN-блокировки Gemini без WARP. CLAUDE.md обновлён (порог тоже).
+- **Решения:** ~~WARP proxy → Google применяет free tier 20 RPD. IPv6 прямое соединение — работает (200 OK), платная квота.~~ **[ИСПРАВЛЕНО в сессии 20: неверно. Тариф не зависит от IP — и WARP, и IPv6 упирались в free-tier 20. Причина была Google-side billing misclassification, не прокси.]** Квота per-project, не per-key — новый ключ в том же проекте не помогает.
+- **Наблюдения:** Все 20 RPD free tier исчерпаны за сессию тестами. Eval с domain_gate пока не запущен. Ожидаемый эффект: correct_abstain 0.1 → ~0.8+ (OOS вопросы будут отсекаться до retrieval по косинусному сходству).
 
 ### 2026-05-13 (сессия 18)
 

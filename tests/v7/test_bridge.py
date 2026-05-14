@@ -251,6 +251,25 @@ class TestMakeGenerateFn:
         )
         assert result == "Синтезированный ответ."
 
+    @pytest.mark.unit
+    def test_includes_low_ranked_passages_in_prompt(self):
+        """final_passages is capped at 24 upstream (merge_all_passages). The
+        generator must not re-truncate below that — the answer-bearing passage
+        can rank low (#22 observed in eval) and must still reach the LLM.
+        """
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value.content = "ответ"
+        fn = make_generate_fn(mock_llm)
+        passages = [
+            {"text": f"нерелевантный фрагмент {i}", "score": 0.5} for i in range(24)
+        ]
+        passages[21]["text"] = "УНИКАЛЬНЫЙ_МАРКЕР_ОТВЕТА"  # ranks #22
+
+        fn(query="вопрос", active_query="вопрос", passages=passages)
+
+        prompt = mock_llm.invoke.call_args[0][0][0].content
+        assert "УНИКАЛЬНЫЙ_МАРКЕР_ОТВЕТА" in prompt
+
 
 class TestInitV7FromChroma:
     @pytest.mark.unit

@@ -76,6 +76,22 @@ class TestRouter:
         result = router({"query": "сравни требования ГОСТ и СП к ограждениям"})
         assert result["plan"]["require_multi_doc"] is True
 
+    @pytest.mark.unit
+    def test_active_query_expanded_with_glossary_term(self):
+        """active_query carries the official term so retrieval matches corpus
+        chunks that use the full name, not the short label the user typed.
+        """
+        result = router(
+            {"query": "Минимальная продолжительность обучения по программе Б?"}
+        )
+        assert "безопасным методам" in result["active_query"]
+
+    @pytest.mark.unit
+    def test_active_query_unchanged_without_glossary_term(self):
+        query = "Как проводится расследование несчастного случая?"
+        result = router({"query": query})
+        assert result["active_query"] == query
+
 
 class TestRouteAfterRouter:
     @pytest.mark.unit

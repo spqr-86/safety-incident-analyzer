@@ -14,11 +14,8 @@ Graph Structure:
 import logging
 import re
 import json
-from functools import lru_cache
-from pathlib import Path
 from typing import Optional, TypedDict
 
-import yaml
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.retrievers import BaseRetriever
 from langgraph.graph import END, StateGraph
@@ -30,6 +27,7 @@ from src.agent_tools import (
     create_tool_context,
     make_tools,
 )
+from src.glossary import expand_query_with_glossary
 from src.llm_factory import get_gemini_llm, get_llm
 from src.parsers import (
     extract_text,
@@ -43,74 +41,6 @@ from src.types import ChunkInfo, RAGStatus, RouteType, VerifyStatus
 from src.semantic_cache import SemanticCache
 
 logger = logging.getLogger(__name__)
-
-
-GLOSSARY_PATH = Path(__file__).parent.parent / "config" / "term_glossary.yaml"
-
-
-# --- Glossary ---
-@lru_cache(maxsize=1)
-def _load_glossary(path: str = str(GLOSSARY_PATH)) -> dict[str, str]:
-    """Load term glossary (cached — called once per process)."""
-    p = Path(path)
-    if not p.exists():
-        logger.warning("Term glossary not found at %s", p)
-        return {}
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f)
-        terms = data.get("terms", {}) if data else {}
-        return {
-            key.lower(): val["official"]
-            for key, val in terms.items()
-            if "official" in val
-        }
-    except Exception as e:
-        logger.error("Failed to load glossary: %s", e)
-        return {}
-
-
-@lru_cache(maxsize=1)
-def _compiled_glossary_patterns() -> list[tuple[re.Pattern, str, str]]:
-    """Pre-compile regex patterns for all glossary terms (cached)."""
-    glossary = _load_glossary()
-    patterns = []
-    for short_term, official in glossary.items():
-        pattern = _make_term_pattern(short_term)
-        patterns.append((pattern, short_term, official))
-    return patterns
-
-
-def _make_term_pattern(term: str) -> re.Pattern:
-    """Build a regex pattern that handles Russian morphological endings.
-
-    For words >3 chars: truncate last 2 chars and allow any suffix.
-    For words <=3 chars: exact match with word boundary.
-    Example: "программа а" → r"программ\\w*\\s+а\\b"
-    """
-    words = term.lower().split()
-    parts = []
-    for w in words:
-        if len(w) > 3:
-            stem = w[: len(w) - 2]
-            parts.append(re.escape(stem) + r"\w*")
-        else:
-            parts.append(re.escape(w) + r"\b")
-    return re.compile(r"\s+".join(parts), re.IGNORECASE)
-
-
-def _expand_query(query: str) -> str:
-    """Expand unofficial abbreviations using cached glossary patterns."""
-    patterns = _compiled_glossary_patterns()
-    if not patterns:
-        return query
-    expansions = []
-    for pattern, short_term, official in patterns:
-        if pattern.search(query):
-            expansions.append(f"{short_term} → {official}")
-    if expansions:
-        return query + "\n\n[Глоссарий: " + "; ".join(expansions) + "]"
-    return query
 
 
 # --- Helper for visual proof processing ---
@@ -137,7 +67,7 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
         if not all([file_name, page_no, bbox]):
             writer(
                 {
-                    "status": f"⚠️ Фрагмент {i+1}: неполные метаданные для визуальной проверки"
+                    "status": f"⚠️ Фрагмент {i + 1}: неполные метаданные для визуальной проверки"
                 }
             )
             continue
@@ -156,7 +86,9 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
             if chunk.get("metadata", {}).get("reasons"):
                 label = reason_labels.get(chunk["metadata"]["reasons"][0], label)
 
-            writer({"status": f"🖼️ Фрагмент {i+1} {label} — анализирую изображение..."})
+            writer(
+                {"status": f"🖼️ Фрагмент {i + 1} {label} — анализирую изображение..."}
+            )
             vp_result = visual_proof_tool.invoke(
                 {
                     "file_name": file_name,
@@ -179,7 +111,7 @@ def _process_visual_proof(chunks: list[dict], visual_proof_tool, writer) -> list
             chunk["image_path"] = f"Visual analysis for {file_name} page {page_no}"
             writer({"status": "🖼️ Текст извлечён из изображения"})
         else:
-            writer({"status": f"✅ Фрагмент {i+1} полный"})
+            writer({"status": f"✅ Фрагмент {i + 1} полный"})
             vp_result = visual_proof_tool.invoke(
                 {
                     "file_name": file_name,
@@ -345,7 +277,7 @@ class MultiAgentRAGWorkflow:
                 }
                 return
 
-        expanded_query = _expand_query(query)
+        expanded_query = expand_query_with_glossary(query)
 
         initial_state: RAGState = {
             "query": expanded_query,

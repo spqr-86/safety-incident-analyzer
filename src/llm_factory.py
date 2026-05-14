@@ -9,6 +9,32 @@ from config.settings import settings
 
 load_dotenv()
 
+
+# IPv6 patch for Gemini API: VPS datacenter IPv4 is ASN-blocked by Google,
+# but IPv6 is not. When no HTTPS_PROXY is set, prefer IPv6 for googleapis.com.
+def _patch_socket_ipv6_for_googleapis() -> None:
+    """Override getaddrinfo to prefer IPv6 for googleapis.com connections."""
+    import socket  # noqa: PLC0415
+
+    if os.getenv("HTTPS_PROXY") or os.getenv("https_proxy"):
+        return  # proxy handles routing, skip patch
+    _orig = socket.getaddrinfo
+
+    def _prefer_ipv6(host: str | None, port, family=0, *args, **kwargs):
+        if host and "googleapis.com" in host:
+            try:
+                results = _orig(host, port, socket.AF_INET6, *args, **kwargs)
+                if results:
+                    return results
+            except OSError:
+                pass
+        return _orig(host, port, family, *args, **kwargs)
+
+    socket.getaddrinfo = _prefer_ipv6  # type: ignore[assignment]
+
+
+_patch_socket_ipv6_for_googleapis()
+
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI
     from google.genai.types import AutomaticFunctionCallingConfig
@@ -44,6 +70,12 @@ def get_llm(**kwargs):
     return factory(**kwargs)
 
 
+# gemini-3 counts reasoning tokens inside max_output_tokens, so the cap must cover
+# thinking_budget AND the visible answer — otherwise reasoning eats the whole budget
+# and the answer truncates mid-word (finish_reason=MAX_TOKENS).
+_GEMINI_ANSWER_TOKEN_ALLOWANCE = 4096
+
+
 def get_gemini_llm(
     model_name: str = None,
     temperature: float = 0.0,
@@ -76,11 +108,12 @@ def get_gemini_llm(
 
     model = model_name or settings.GEMINI_FAST_MODEL
 
+    max_output_tokens = (thinking_budget or 0) + _GEMINI_ANSWER_TOKEN_ALLOWANCE
     kwargs = dict(
         model=model,
         google_api_key=api_key,
         temperature=temperature,
-        max_output_tokens=2048,
+        max_output_tokens=max_output_tokens,
         timeout=settings.REQUEST_TIMEOUT,
     )
     if thinking_budget is not None:
