@@ -62,3 +62,35 @@ def test_extract_chunks_real_types():
     # Context should NOT be in content anymore, but in metadata
     assert "[Chapter 1]" not in chunks[1].page_content
     assert chunks[1].metadata["parent_section"] == "Chapter 1"
+
+
+def test_short_bbox_keeps_text_drops_bbox():
+    """Регрессия: короткий bbox (< MIN_BBOX_HEIGHT) не должен ронять текст из индекса.
+
+    Раньше items с bbox_h < 7 выбрасывались целиком — это роняло однострочные
+    пункты норм (напр. «Повторный инструктаж ... 6 месяцев» из ППРФ 2464).
+    Теперь текст остаётся, bbox просто отсутствует.
+    """
+    processor = DocumentProcessor()
+
+    short_bbox = BoundingBox(l=10, b=44, r=200, t=50)  # height=6, < 7
+    prov_short = ProvenanceItem(page_no=4, bbox=short_bbox, charspan=[0, 10])
+
+    item = TextItem(
+        text="Повторный инструктаж проводится не реже 1 раза в 6 месяцев.",
+        orig="Повторный инструктаж проводится не реже 1 раза в 6 месяцев.",
+        label="text",
+        self_ref="#/text-short",
+        parent=None,
+        children=[],
+        prov=[prov_short],
+    )
+
+    doc = MagicMock()
+    doc.texts.return_value = iter([item])
+
+    chunks = processor._process_docling_document(doc, "2464.pdf")
+
+    assert len(chunks) == 1
+    assert "Повторный инструктаж" in chunks[0].page_content
+    assert chunks[0].metadata.get("bbox") is None

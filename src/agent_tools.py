@@ -189,14 +189,59 @@ def make_tools(ctx: ToolContext):
     return [search_documents, visual_proof]
 
 
+SOURCE_DOCS_DIR = Path("source_docs").resolve()
+MAX_BBOX_DIM = 10_000.0  # PDF user-units; защита от DoS-рендера
+
+
+def _validate_file_name(file_name: str) -> Path | str:
+    """Возвращает безопасный Path внутри SOURCE_DOCS_DIR или строку с ошибкой.
+
+    Параметр приходит от LLM, который может быть подвержен prompt-injection через
+    содержимое PDF. Любые '/', '..' или абсолютные пути — невалидны.
+    """
+    if not file_name or not isinstance(file_name, str):
+        return "Error: file_name must be a non-empty string."
+    if Path(file_name).name != file_name:
+        return f"Error: file_name must be a bare filename, got '{file_name}'."
+    candidate = (SOURCE_DOCS_DIR / file_name).resolve()
+    if SOURCE_DOCS_DIR not in candidate.parents:
+        return f"Error: file_name '{file_name}' resolves outside source_docs."
+    if not candidate.exists():
+        return f"Error: File '{file_name}' not found in source_docs."
+    return candidate
+
+
+def _validate_bbox(bbox) -> str | None:
+    """Возвращает None если bbox валиден, иначе текст ошибки."""
+    import math
+
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return "Error: bbox must be a list of 4 floats [left, top, right, bottom]."
+    try:
+        vals = [float(v) for v in bbox]
+    except (TypeError, ValueError):
+        return "Error: bbox values must be numeric."
+    if not all(math.isfinite(v) for v in vals):
+        return "Error: bbox values must be finite."
+    if any(v < 0 or v > MAX_BBOX_DIM for v in vals):
+        return f"Error: bbox values must be within [0, {MAX_BBOX_DIM}]."
+    left, top, right, bottom = vals
+    if right <= left or abs(bottom - top) < 1e-6:
+        return "Error: bbox has zero/negative area."
+    return None
+
+
 def _visual_proof_impl(file_name, page_no, bbox, mode):
     # Move the body of visual_proof here
     try:
-        # Resolve file path
-        source_path = Path("source_docs") / file_name
+        resolved = _validate_file_name(file_name)
+        if isinstance(resolved, str):
+            return resolved
+        source_path = resolved
 
-        if not source_path.exists():
-            return f"Error: File '{file_name}' not found in source_docs."
+        bbox_err = _validate_bbox(bbox)
+        if bbox_err:
+            return bbox_err
 
         doc = fitz.open(source_path)
         if page_no < 1 or page_no > len(doc):

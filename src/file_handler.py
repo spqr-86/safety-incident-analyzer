@@ -25,13 +25,18 @@ from utils.logging import logger
 FileLike = Union[str, os.PathLike, io.BufferedIOBase, io.BytesIO, io.StringIO]
 
 # ⚙️ Обновляем версию, так как формат хранения кардинально меняется
-# v2.1-grouped: добавлен группировка, фильтрация и новые метаданные
-PIPELINE_VERSION = "v2.1-grouped"
+# v2.2-grouped: bbox-фильтр больше не отбрасывает текст (только зануляет bbox);
+# MAX_CHUNK_SIZE из settings; смена страницы flushит чанк.
+PIPELINE_VERSION = "v2.2-grouped"
 
 # --- Константы для фильтрации и группировки ---
+# Порог высоты bbox: ниже него bbox считается мусором (визуальные артефакты, footer).
+# Текст при этом сохраняется — bbox просто зануляется (visual_proof не сработает,
+# но retrieval остаётся полным). Раньше item выбрасывался целиком — это роняло
+# короткие однострочные пункты норм (см. ППРФ 2464).
 MIN_BBOX_HEIGHT = 7
 BLACKLIST_PHRASES = ["Премиальная версия", "Скачано с", "Страница"]
-MAX_CHUNK_SIZE = 1000  # Максимальный размер сгруппированного чанка в символах
+MAX_CHUNK_SIZE = settings.CHUNK_SIZE
 
 
 @dataclass
@@ -250,12 +255,10 @@ class DocumentProcessor:
                         if hasattr(prov.bbox, "as_tuple")
                         else prov.bbox
                     )
-                    # Проверка высоты
-                    # Обычно height = abs(y1 - y0)
+                    # Проверка высоты: bbox мусорный → зануляем, текст оставляем.
                     height = abs(bbox_tuple[3] - bbox_tuple[1])
-                    if height < MIN_BBOX_HEIGHT:
-                        continue
-                    item_bbox = bbox_tuple
+                    if height >= MIN_BBOX_HEIGHT:
+                        item_bbox = bbox_tuple
 
                 if hasattr(prov, "page_no"):
                     item_page = prov.page_no
@@ -304,11 +307,14 @@ class DocumentProcessor:
                 finalize_chunk(i)
 
             # Добавляем в буфер
-            current_chunk_text.append(text)
             if item_bbox:
-                update_bbox(item_bbox, item_page)
-            elif item_page:
+                # Смена страницы внутри bbox-обновления: flush + new chunk.
+                if not update_bbox(item_bbox, item_page):
+                    finalize_chunk(i)
+                    update_bbox(item_bbox, item_page)
+            elif item_page and current_chunk_page is None:
                 current_chunk_page = item_page
+            current_chunk_text.append(text)
 
         # Finalize last chunk
         finalize_chunk(len(items))

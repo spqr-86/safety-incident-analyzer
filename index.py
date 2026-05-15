@@ -29,6 +29,17 @@ def main():
         logger.info(f"Удаление старой базы данных из: {settings.CHROMA_DB_PATH}...")
         shutil.rmtree(settings.CHROMA_DB_PATH, ignore_errors=True)
 
+    # Инвалидация кэшей, привязанных к содержимому индекса.
+    # Без этого BM25/Docling-pkl переживают destructive reindex и поиск идёт
+    # по «призракам» удалённых чанков.
+    if os.path.exists(settings.CACHE_DIR):
+        logger.info(f"Очистка Docling-cache: {settings.CACHE_DIR}")
+        shutil.rmtree(settings.CACHE_DIR, ignore_errors=True)
+    bm25_cache = ".bm25_cache.pkl"
+    if os.path.exists(bm25_cache):
+        logger.info(f"Удаление BM25-cache: {bm25_cache}")
+        os.remove(bm25_cache)
+
     # Собираем все файлы допустимых типов
     file_paths = _collect_paths(settings.SOURCE_DOCS_PATH, settings.ALLOWED_TYPES)
     if not file_paths:

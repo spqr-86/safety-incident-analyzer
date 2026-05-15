@@ -145,6 +145,11 @@ class RAGState(TypedDict):
     revision_count: int
     final_answer: str
     is_routed: bool
+    # Revision routing: установлено в _escalation_node, читается _route_after_verify
+    # для возврата ревизии в rag_complex (а не rag_simple — иначе теряется decomposition).
+    escalated_from_simple: bool
+    # Декомпозиция в rag_complex; нужна в стейте, чтобы ревизия видела подвопросы.
+    subquestions: list[str]
 
 
 class MultiAgentRAGWorkflow:

@@ -97,3 +97,70 @@ def test_visual_proof_show_mode(mock_fitz_open, tools):
 
             # Verify save called
             mock_pix.save.assert_called()
+
+
+# --- Validation tests (Phase 3 hardening) ---
+
+
+def test_validate_file_name_rejects_traversal():
+    from src.agent_tools import _validate_file_name
+
+    result = _validate_file_name("../../etc/passwd")
+    assert isinstance(result, str)
+    assert "Error" in result
+
+
+def test_validate_file_name_rejects_absolute_path():
+    from src.agent_tools import _validate_file_name
+
+    result = _validate_file_name("/etc/passwd")
+    assert isinstance(result, str)
+    assert "Error" in result
+
+
+def test_validate_file_name_rejects_subdir():
+    from src.agent_tools import _validate_file_name
+
+    result = _validate_file_name("subdir/file.pdf")
+    assert isinstance(result, str)
+    assert "Error" in result
+
+
+def test_validate_file_name_rejects_empty():
+    from src.agent_tools import _validate_file_name
+
+    assert "Error" in _validate_file_name("")  # type: ignore[arg-type]
+
+
+def test_validate_bbox_rejects_non_finite():
+    from src.agent_tools import _validate_bbox
+
+    assert _validate_bbox([float("inf"), 0, 100, 100]) is not None
+    assert _validate_bbox([float("nan"), 0, 100, 100]) is not None
+
+
+def test_validate_bbox_rejects_out_of_range():
+    from src.agent_tools import _validate_bbox
+
+    assert _validate_bbox([-1, 0, 100, 100]) is not None
+    assert _validate_bbox([0, 0, 99999, 100]) is not None
+
+
+def test_validate_bbox_rejects_wrong_arity():
+    from src.agent_tools import _validate_bbox
+
+    assert _validate_bbox([0, 0, 100]) is not None
+    assert _validate_bbox("not a list") is not None  # type: ignore[arg-type]
+
+
+def test_validate_bbox_rejects_zero_area():
+    from src.agent_tools import _validate_bbox
+
+    assert _validate_bbox([10, 10, 10, 20]) is not None  # right==left
+    assert _validate_bbox([10, 10, 20, 10]) is not None  # bottom==top
+
+
+def test_validate_bbox_accepts_normal():
+    from src.agent_tools import _validate_bbox
+
+    assert _validate_bbox([10.0, 20.0, 100.0, 80.0]) is None
