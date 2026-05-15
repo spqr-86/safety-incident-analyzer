@@ -189,10 +189,10 @@ flowchart TD
 *   ✅ Hard gates с детерминированными score-порогами (без LLM-роутинга)
 *   ✅ Генерация ответов — Gemini (thinking_budget=4096), retry при 503
 *   ✅ Term Glossary — расшифровка доменных аббревиатур, применяется в ноде `router`
-*   ✅ Индексация PDF/DOCX через Docling, 11 нормативных документов
+*   ✅ Индексация PDF/DOCX через Docling, 11 нормативных документов, **1069 чанков** (v2.2-grouped)
 *   ✅ Веб-интерфейс Streamlit, задеплоен на VPS (порт 8502)
 *   ✅ Eval framework — `eval/run_v7_eval.py`, golden-датасет 50 вопросов, LLM-as-judge
-*   🔄 Баг чанкинга в `_process_docling_document` — выроняет пункты норм из индекса (см. backlog.md)
+*   ✅ Баг чанкинга исправлен (`MIN_BBOX_HEIGHT` не роняет текст, 830 → 1069 чанков) — 2026-05-15
 *   🔄 Расширение тестового датасета
 
 ---

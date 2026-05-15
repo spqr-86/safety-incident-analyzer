@@ -19,7 +19,8 @@ source venv/bin/activate   # before any command
 - **URL:** http://213.176.64.237:8502
 - **Port:** 8502 (UFW opened), tmux session `sia` (attach: `tmux a -t sia`)
 - **Start:** `cd /home/petr/projects/safety-incident-analyzer && source venv/bin/activate && streamlit run app.py --server.port 8502`
-- **Indexed docs:** 8 PDFs → 830 chunks (VPS, не обновлено). Локально source_docs: +223н, +КоАП ст.5.27.1. Нужно scp + python index.py на VPS.
+- **Indexed docs:** 11 PDFs → 1069 chunks (2026-05-15, после фикса MIN_BBOX_HEIGHT в file_handler.py — спасено 239 чанков).
+- **Машина — это VPS.** Локальная директория `/home/petr/projects/safety-incident-analyzer` и есть прод-инстанс. Никакого scp/git pull не нужно — правки сразу на сервере, остаётся только перезапустить tmux `sia`.
 
 **VPS env requirements:**
 - `HTTPS_PROXY=socks5h://localhost:40000` + `HTTP_PROXY=socks5h://localhost:40000` — WARP proxy для Gemini (VPS AEZA заблокирован по ASN)
@@ -28,8 +29,8 @@ source venv/bin/activate   # before any command
 ## Known Issues
 
 - ~~**Gemini 503 → stub fallback**~~ ✅ Fixed 2026-05-08: tenacity retry (3 attempts, exp backoff 2→4→8s), fallback to stub only after all retries.
-- **P1** Баг чанкинга в `src/file_handler.py` (`_process_docling_document`) выроняет целые пункты норм из индекса (напр. «Повторный инструктаж проводится не реже 1 раза в 6 месяцев» есть в PDF 2464 и чисто извлекается Docling, но в ChromaDB его нет). Прямо ограничивает eval correctness. Нужен дебаг группировки + переиндексация (index.py destructive). — см. backlog.md
-- **P1** `app.py` не читает `result["answer"]` — см. backlog.md
+- ~~**P1** Баг чанкинга в `src/file_handler.py`~~ ✅ Fixed 2026-05-15: MIN_BBOX_HEIGHT больше не роняет текст, MAX_CHUNK_SIZE из settings, update_bbox flush. 830 → 1069 чанков. PIPELINE_VERSION v2.2-grouped. — см. backlog.md
+- ~~**P1** `app.py` не читает `result["answer"]`~~ ✅ Fixed ранее (строка 241 читает result["answer"])
 - **P2** FlashRank score inflation в evaluate_complex — см. backlog.md
 
 ## Commands
@@ -145,6 +146,19 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ---
 
 ## Session Log
+
+### 2026-05-15 (сессия 21)
+
+- **Сделано:**
+  - **Code review** (субагент code-reviewer): 25 находок (1 Critical, 10 High, 11 Medium, 5 Low). Отчёт: `REVIEW_2026-05-15.md`.
+  - **Фикс P1 — баг чанкинга** (`src/file_handler.py`): root cause подтверждён диагностическим скриптом (`scripts/diagnose_chunking.py`) — `MIN_BBOX_HEIGHT=7` роняло 37% items на 2464.pdf включая «Повторный инструктаж … 6 месяцев» (bbox_h=5.71). Фикс: bbox-фильтр зануляет bbox, но оставляет текст; `MAX_CHUNK_SIZE` → `settings.CHUNK_SIZE`; `update_bbox=False` flush-ит чанк; `PIPELINE_VERSION` → v2.2-grouped. Переиндексация: 830 → **1069 чанков**. trace_v7 top score 1.000 на целевом вопросе.
+  - **Фикс state-рассинхрона** (`agents/multiagent_rag.py`): `escalated_from_simple` и `subquestions` добавлены в `RAGState` TypedDict — ревизия после escalation теперь корректно идёт в rag_complex.
+  - **Hardening visual_proof** (`src/agent_tools.py`): `_validate_file_name` (path traversal: `../`, abs path, subdir) + `_validate_bbox` (finite, range [0..10000], non-zero area) — защита от prompt-injection из PDF и DoS fitz.
+  - **Cache invalidation** (`index.py`): destructive reindex теперь удаляет `document_cache/` и `.bm25_cache.pkl`.
+  - **17 новых тестов**, 396 всего.
+  - README.md + backlog.md + CLAUDE.md знакомлены с изменениями.
+- **Решения:** Машина — это VPS (hostname ideologicalmage.aeza.network, 213.176.64.237). Деплой = рестарт tmux sia, никакого scp/SSH.
+- **Наблюдения:** После фикса чанкинга ожидается рост correctness — corpus стал полнее на 239 чанков. Eval под фикс не прогонялся — следующий шаг перед VPS деплоем eval.
 
 ### 2026-05-14 (сессия 20)
 

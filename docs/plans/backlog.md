@@ -1,23 +1,17 @@
 # Backlog
 
-## [P1] Баг чанкинга: `_process_docling_document` выроняет пункты норм
+## ~~[P1] Баг чанкинга: `_process_docling_document` выроняет пункты норм~~ ✅ FIXED 2026-05-15
 
-`src/file_handler.py` (`_process_docling_document`) при группировке чанков теряет
-целые элементы документа. Подтверждено: «Повторный инструктаж по охране труда
-проводится не реже одного раза в 6 месяцев» (п. 14 Приказа 2464) есть в исходном
-PDF и чисто извлекается Docling (`export_to_markdown`), но в индексе ChromaDB
-отсутствует — единственный чанк с «повторный инструктаж» содержит только п. 15.
+Root cause: `MIN_BBOX_HEIGHT=7` отбрасывал item целиком (с текстом) до группировки.
+Короткие однострочные пункты ППРФ 2464 имели bbox_h~5.7, попадали под фильтр.
 
-**Влияние:** напрямую ограничивает eval correctness — нормы, которых нет в
-индексе, дают честный «в фрагментах ответа нет» (faithfulness 1.0, correctness 0).
-
-**Фикс:**
-1. Дебаг логики группировки/`update_bbox` в `_process_docling_document` —
-   подозрение на обработку смены страницы (`return False` при page change) или
-   dedup по `seen_chunk_hashes`.
-2. Сравнить кол-во элементов `doc.texts` с кол-вом финальных чанков на 2464.pdf.
-3. После фикса — переиндексация (`python index.py` — DESTRUCTIVE, дропает ChromaDB).
-4. Регресс-проверка: чанк с «не реже одного раза в 6 месяцев» должен быть в индексе.
+Исправлено в commit 32c82ae:
+- `MIN_BBOX_HEIGHT` фильтр зануляет bbox, но оставляет текст в индексе
+- `MAX_CHUNK_SIZE` теперь берётся из `settings.CHUNK_SIZE` (1500)
+- `update_bbox=False` (смена страницы) flush-ит чанк
+- `PIPELINE_VERSION` → v2.2-grouped
+- 830 → 1069 чанков после переиндексации (+239)
+- Регресс-тест: `tests/test_docling_structure.py::test_short_bbox_keeps_text_drops_bbox`
 
 ---
 
