@@ -19,7 +19,7 @@ source venv/bin/activate   # before any command
 - **URL:** http://213.176.64.237:8502
 - **Port:** 8502 (UFW opened), tmux session `sia` (attach: `tmux a -t sia`)
 - **Start:** `cd /home/petr/projects/safety-incident-analyzer && source venv/bin/activate && streamlit run app.py --server.port 8502`
-- **Indexed docs:** 11 PDFs → 1069 chunks (2026-05-15, после фикса MIN_BBOX_HEIGHT в file_handler.py — спасено 239 чанков).
+- **Indexed docs:** 12 PDFs → 1973 chunks (добавлен полный ТК РФ, v2.3-noise-clean, 2026-05-16).
 - **Машина — это VPS.** Локальная директория `/home/petr/projects/safety-incident-analyzer` и есть прод-инстанс. Никакого scp/git pull не нужно — правки сразу на сервере, остаётся только перезапустить tmux `sia`.
 
 **VPS env requirements:**
@@ -150,12 +150,14 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ### 2026-05-16 (сессия 22)
 
 - **Сделано:**
-  - **Regex noise cleanup** (`src/file_handler.py`): добавлена `_clean_noise()` — удаляет URL-watermarks (`https://...`), page markers (`14/34`), timestamps (`25.01.2026, 20:10`) из текста чанков. `PIPELINE_VERSION` → `v2.3-noise-clean`. Переиндексация: 1069 → **976 чанков** (−93 пустых мусорных).
+  - **Regex noise cleanup** (`src/file_handler.py`): добавлена `_clean_noise()` — удаляет URL-watermarks (`https://...`), page markers (`14/34`), timestamps (`25.01.2026, 20:10`) из текста чанков. `PIPELINE_VERSION` → `v2.3-noise-clean`. Переиндексация: 1069 → 976 чанков (−93 пустых мусорных).
   - **FlashRank score inflation fix** (P2): `bridge.py` сохраняет `vector_score` до перезаписи FlashRank-ом; `nlp_core.py` `mmr_select` использует `vector_score` для relevance; `rag_complex.py` `top_score` по `vector_score`. Эффект: top_score 0.998 (раздутый) → 0.577 (реальный), вопросы про Программу А теперь отвечаются корректно.
   - **Eval**: correctness 6.86 → **7.9** ✅ (цель 7.5 достигнута). Faith=0.988, false-sufficiency=0.15.
-  - Backlog обновлён (план 5 пунктов, пункт #1 DONE).
-- **Решения:** FlashRank не откалиброван на русском домене — его score нельзя использовать для порогов MMR и gates. Всегда хранить `vector_score` отдельно.
-- **Наблюдения:** False-sufficiency=0.15 выше цели 10%. Следующий рычаг — contextual retrieval (#2 плана), ожидаемый эффект +35-49% recall.
+  - **Добавлен полный ТК РФ** (Trudovoj_kodeks_RF.pdf, ~1MB) → `source_docs/`. Переиндексация: 976 → **1973 чанков** (12 документов). Ст. 63, 229, 229.3 и весь раздел о расследовании НС теперь в индексе.
+  - **Parent-context chunking** (#3 плана) реализован и протестирован: child 400 chars для embedding, parent 1500 для LLM. Eval: correctness 7.9→7.49, false-sufficiency 0.15→0.25. **Откачен** — регрессия из-за завышенных similarity scores малых чанков.
+  - Backlog обновлён (план 5 пунктов, пункт #1 DONE; #3 tested-reverted).
+- **Решения:** FlashRank не откалиброван на русском домене — его score нельзя использовать для порогов. Parent-context chunking требует перекалибровки порогов под новый диапазон scores.
+- **Наблюдения:** False-sufficiency=0.15 выше цели 10%. vocabulary mismatch: "самостоятельно" vs "возглавляет" в ст.229.3 ТК РФ — чанк есть, но не поднимается. Следующий рычаг — eval cost optimization (кэш + smoke test 10 вопросов), затем contextual retrieval (#2 плана).
 
 ### 2026-05-15 (сессия 21)
 
