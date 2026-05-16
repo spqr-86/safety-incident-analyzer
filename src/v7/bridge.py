@@ -81,7 +81,13 @@ def make_rerank_fn(
         reranked = []
         for r in results[:top_k]:
             orig = passages[r["id"]]
-            reranked.append({**orig, "score": round(float(r["score"]), 4)})
+            reranked.append(
+                {
+                    **orig,
+                    "vector_score": orig.get("score", 0.0),
+                    "score": round(float(r["score"]), 4),
+                }
+            )
         return reranked
 
     return _rerank

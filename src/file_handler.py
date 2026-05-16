@@ -5,6 +5,7 @@ import io
 import json
 import os
 import pickle
+import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -27,7 +28,7 @@ FileLike = Union[str, os.PathLike, io.BufferedIOBase, io.BytesIO, io.StringIO]
 # ⚙️ Обновляем версию, так как формат хранения кардинально меняется
 # v2.2-grouped: bbox-фильтр больше не отбрасывает текст (только зануляет bbox);
 # MAX_CHUNK_SIZE из settings; смена страницы flushит чанк.
-PIPELINE_VERSION = "v2.2-grouped"
+PIPELINE_VERSION = "v2.3-noise-clean"
 
 # --- Константы для фильтрации и группировки ---
 # Порог высоты bbox: ниже него bbox считается мусором (визуальные артефакты, footer).
@@ -37,6 +38,24 @@ PIPELINE_VERSION = "v2.2-grouped"
 MIN_BBOX_HEIGHT = 7
 BLACKLIST_PHRASES = ["Премиальная версия", "Скачано с", "Страница"]
 MAX_CHUNK_SIZE = settings.CHUNK_SIZE
+
+# Паттерны шума — удаляются из текста чанка перед индексацией.
+# URL-водяные знаки (напр. https://1otruda.ru/#/document/99/727688582),
+# маркеры страниц (14/34), временны́е штампы (25.01.2026, 20:10).
+_NOISE_PATTERNS = re.compile(
+    r"https?://\S+"  # URL
+    r"|(?<!\d)\d{1,2}/\d{2,3}(?!\d)"  # n/nn страница (14/34) — не дроби в тексте
+    r"|\d{2}\.\d{2}\.\d{4},?\s+\d{2}:\d{2}",  # дата+время 25.01.2026, 20:10
+    re.UNICODE,
+)
+
+
+def _clean_noise(text: str) -> str:
+    """Удаляет URL-водяные знаки, маркеры страниц и временны́е штампы."""
+    cleaned = _NOISE_PATTERNS.sub("", text)
+    # Убираем лишние пробелы/переносы, оставшиеся после удаления
+    cleaned = re.sub(r" {2,}", " ", cleaned)
+    return cleaned.strip()
 
 
 @dataclass
@@ -242,6 +261,11 @@ class DocumentProcessor:
 
             # 1. Blacklist Filter
             if any(phrase in text for phrase in BLACKLIST_PHRASES):
+                continue
+
+            # 1b. Noise Cleanup — URL-watermarks, page markers, timestamps
+            text = _clean_noise(text)
+            if not text:
                 continue
 
             # 2. BBox Extraction & Height Filter

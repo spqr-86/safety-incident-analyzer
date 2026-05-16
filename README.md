@@ -189,10 +189,13 @@ flowchart TD
 *   ✅ Hard gates с детерминированными score-порогами (без LLM-роутинга)
 *   ✅ Генерация ответов — Gemini (thinking_budget=4096), retry при 503
 *   ✅ Term Glossary — расшифровка доменных аббревиатур, применяется в ноде `router`
-*   ✅ Индексация PDF/DOCX через Docling, 11 нормативных документов, **1069 чанков** (v2.2-grouped)
+*   ✅ Индексация PDF/DOCX через Docling, 11 нормативных документов, **976 чанков** (v2.3-noise-clean)
 *   ✅ Веб-интерфейс Streamlit, задеплоен на VPS (порт 8502)
 *   ✅ Eval framework — `eval/run_v7_eval.py`, golden-датасет 50 вопросов, LLM-as-judge
 *   ✅ Баг чанкинга исправлен (`MIN_BBOX_HEIGHT` не роняет текст, 830 → 1069 чанков) — 2026-05-15
+*   ✅ Regex noise cleanup (`_clean_noise`): URL-watermarks, page markers, timestamps — PIPELINE_VERSION v2.3-noise-clean — 2026-05-16
+*   ✅ FlashRank score inflation fix: `vector_score` сохраняется отдельно, MMR и threshold gates используют его — 2026-05-16
+*   ✅ Eval correctness **7.9/10** (цель 7.5 достигнута) — 2026-05-16
 *   🔄 Расширение тестового датасета
 
 ---

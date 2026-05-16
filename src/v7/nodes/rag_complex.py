@@ -91,10 +91,13 @@ def rag_complex(state: RAGState) -> RAGState:
                     passages.append(p)
                     seen_texts.add(p.get("text", ""))
 
-    # FlashRank reranking (if injected)
+    # FlashRank reranking (if injected): reorders by cross-encoder score,
+    # but top_score stays anchored to vector similarity (not inflated FlashRank probs).
     if _rerank_fn is not None and passages:
         passages = _rerank_fn(active_q, passages, slow_plan["top_k"])
-    top_score = max((p.get("score", 0.0) for p in passages), default=0.0)
+    top_score = max(
+        (p.get("vector_score", p.get("score", 0.0)) for p in passages), default=0.0
+    )
 
     _, metrics = compute_attempt_metrics(original_q, active_q, passages, slow_plan)
 

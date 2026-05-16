@@ -1,5 +1,19 @@
 # Backlog
 
+## План улучшений RAG (pipeline quality) — 2026-05-15
+
+Приоритизированный список после eval correctness=6.69 (цель 7.5):
+
+| # | Улучшение | Сложность | Ожидаемый эффект | Статус |
+|---|-----------|-----------|------------------|--------|
+| 1 | **Regex URL/date noise cleanup** в `_clean_noise` (file_handler.py) | ~30 мин | Программы А/Б/В 0→? | ✅ DONE 2026-05-16 |
+| 2 | **Contextual retrieval** — LLM генерирует 1-2 предложения контекста на чанк перед embedding | ~2 дня | +35-49% recall (Anthropic) |  |
+| 3 | **Parent-context chunking** — small chunks для поиска, large для генерации | ~1 день | +coherence ответа |  |
+| 4 | **Overlap 10-15%** — добавить перекрытие чанков в grouping логике | ~1 ч | +continuity |  |
+| 5 | **Hybrid retriever fix** — RRF вместо concatenation в applicability_retriever.py | ~2 ч | +recall на BM25-only вопросах |  |
+
+---
+
 ## ~~[P1] Баг чанкинга: `_process_docling_document` выроняет пункты норм~~ ✅ FIXED 2026-05-15
 
 Root cause: `MIN_BBOX_HEIGHT=7` отбрасывал item целиком (с текстом) до группировки.

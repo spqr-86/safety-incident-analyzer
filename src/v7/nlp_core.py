@@ -299,7 +299,7 @@ def mmr_select(
         best_mmr = -1.0
 
         for i, p in enumerate(remaining):
-            relevance = p.get("score", 0.0)
+            relevance = p.get("vector_score", p.get("score", 0.0))
             doc_id = p.get("doc_id", "unknown")
             doc_count = selected_doc_ids.get(doc_id, 0)
             diversity_penalty = doc_count / max(len(selected), 1)
