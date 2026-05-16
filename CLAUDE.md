@@ -31,7 +31,7 @@ source venv/bin/activate   # before any command
 - ~~**Gemini 503 → stub fallback**~~ ✅ Fixed 2026-05-08: tenacity retry (3 attempts, exp backoff 2→4→8s), fallback to stub only after all retries.
 - ~~**P1** Баг чанкинга в `src/file_handler.py`~~ ✅ Fixed 2026-05-15: MIN_BBOX_HEIGHT больше не роняет текст, MAX_CHUNK_SIZE из settings, update_bbox flush. 830 → 1069 чанков. PIPELINE_VERSION v2.2-grouped. — см. backlog.md
 - ~~**P1** `app.py` не читает `result["answer"]`~~ ✅ Fixed ранее (строка 241 читает result["answer"])
-- **P2** FlashRank score inflation в evaluate_complex — см. backlog.md
+- ~~**P2** FlashRank score inflation в evaluate_complex~~ ✅ Fixed 2026-05-16: vector_score сохраняется в bridge.py, MMR/gates используют его вместо FlashRank score. correctness 6.86 → 7.9.
 
 ## Commands
 
@@ -146,6 +146,16 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 ---
 
 ## Session Log
+
+### 2026-05-16 (сессия 22)
+
+- **Сделано:**
+  - **Regex noise cleanup** (`src/file_handler.py`): добавлена `_clean_noise()` — удаляет URL-watermarks (`https://...`), page markers (`14/34`), timestamps (`25.01.2026, 20:10`) из текста чанков. `PIPELINE_VERSION` → `v2.3-noise-clean`. Переиндексация: 1069 → **976 чанков** (−93 пустых мусорных).
+  - **FlashRank score inflation fix** (P2): `bridge.py` сохраняет `vector_score` до перезаписи FlashRank-ом; `nlp_core.py` `mmr_select` использует `vector_score` для relevance; `rag_complex.py` `top_score` по `vector_score`. Эффект: top_score 0.998 (раздутый) → 0.577 (реальный), вопросы про Программу А теперь отвечаются корректно.
+  - **Eval**: correctness 6.86 → **7.9** ✅ (цель 7.5 достигнута). Faith=0.988, false-sufficiency=0.15.
+  - Backlog обновлён (план 5 пунктов, пункт #1 DONE).
+- **Решения:** FlashRank не откалиброван на русском домене — его score нельзя использовать для порогов MMR и gates. Всегда хранить `vector_score` отдельно.
+- **Наблюдения:** False-sufficiency=0.15 выше цели 10%. Следующий рычаг — contextual retrieval (#2 плана), ожидаемый эффект +35-49% recall.
 
 ### 2026-05-15 (сессия 21)
 
