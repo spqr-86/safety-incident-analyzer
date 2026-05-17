@@ -147,6 +147,14 @@ python scripts/trace_v7.py --no-chroma "привет как дела"   # stub m
 
 ## Session Log
 
+### 2026-05-17 (сессия 24)
+
+- **Сделано:**
+  - **DeepSeek в gosts_pipeline**: `_generate()` переключён с Gemini на DeepSeek (`deepseek-chat`, openai SDK, temperature=0, max_tokens=2048). `DEEPSEEK_API_KEY` добавлен в `.env`. Основной SIA pipeline (ОТ) — Gemini без изменений.
+  - **Gold dataset v2** (`eval/gosts_gold_v2.json`): chunk-based, 5 вопросов по реальным чанкам с числовыми данными. Eval: 3/5 правильных. 2 провала — нужный чанк есть в базе, но не попал в top-15 retrieval.
+- **Решения:** Gold dataset для RAG строить bottom-up (от чанков), не top-down (от тем). Тема документа ≠ данные в индексе.
+- **Наблюдения:** Sources в passages пустые — metadata["source"] не сохраняется при индексировании (мелкий баг в index_gosts.py).
+
 ### 2026-05-17 (сессия 23)
 
 - **Сделано:**
