@@ -45,6 +45,18 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.error("api.startup: pipeline init failed", error=str(exc))
         raise
+
+    # Gosts pipeline — загружаем отдельно, не падаем если коллекции нет
+    try:
+        from src.gosts_pipeline import _load_store as _gosts_load
+
+        _gosts_load()
+        _pipeline["gosts_ready"] = True
+        logger.info("api.startup: gosts pipeline ready")
+    except Exception as exc:
+        logger.warning("api.startup: gosts pipeline not available", error=str(exc))
+        _pipeline["gosts_ready"] = False
+
     yield
     _pipeline.clear()
     logger.info("api.shutdown: pipeline cleared")
@@ -124,6 +136,48 @@ def query(req: QueryRequest) -> QueryResponse:
     )
     return QueryResponse(
         answer=answer, passages=passages, path=path, elapsed_sec=elapsed
+    )
+
+
+@app.post("/query/gosts", response_model=QueryResponse)
+def query_gosts(req: QueryRequest) -> QueryResponse:
+    """Ask a question about technical standards (ГОСТ, СНиП, СП) for water treatment."""
+    if not req.question or not req.question.strip():
+        raise HTTPException(status_code=400, detail="question must not be empty")
+
+    if not _pipeline.get("gosts_ready"):
+        raise HTTPException(
+            status_code=503,
+            detail="gosts pipeline not available — run index_gosts.py first",
+        )
+
+    try:
+        from src.gosts_pipeline import query as gosts_query
+
+        result = gosts_query(req.question.strip())
+    except Exception as exc:
+        logger.error("api.gosts: pipeline error", question=req.question, error=str(exc))
+        raise HTTPException(status_code=500, detail=f"pipeline error: {exc}") from exc
+
+    passages = [
+        Passage(
+            text=p.get("text", ""),
+            source=p.get("metadata", {}).get("source", ""),
+            score=float(p.get("score", 0.0)),
+        )
+        for p in result.get("passages", [])
+    ]
+    logger.info(
+        "api.gosts: done",
+        question=req.question[:80],
+        passages=len(passages),
+        elapsed_sec=result.get("elapsed_sec"),
+    )
+    return QueryResponse(
+        answer=result.get("answer", ""),
+        passages=passages,
+        path=result.get("path", ""),
+        elapsed_sec=result.get("elapsed_sec", 0.0),
     )
 
 

@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # ── Lazy SQLite3 fix (same as app.py) ─────────────────────────────────────────
 try:
     import pysqlite3
+
     sys.modules["sqlite3"] = pysqlite3
 except ImportError:
     pass
@@ -90,9 +91,7 @@ def run_query(graph, question: str) -> dict[str, Any]:
     path = "complex" if "complex" in stages else "simple"
 
     # Build context string from retrieved passages
-    context = "\n\n".join(
-        p.get("text", "") for p in final_passages if p.get("text")
-    )
+    context = "\n\n".join(p.get("text", "") for p in final_passages if p.get("text"))
 
     return {
         "answer": answer,
@@ -132,7 +131,7 @@ def evaluate_correctness(
 JSON:"""
     )
 
-    from langchain_core.output_parsers import StrOutputParser
+
     chain = prompt | llm | StrOutputParser()
     response = chain.invoke(
         {"question": question, "ground_truth": ground_truth, "answer": answer}
@@ -140,6 +139,7 @@ JSON:"""
 
     try:
         import re
+
         match = re.search(r"\{.*\}", response, re.DOTALL)
         if match:
             data = json.loads(match.group())
@@ -149,7 +149,10 @@ JSON:"""
             }
     except Exception:
         pass
-    return {"correctness_score": 0.0, "correctness_reasoning": f"parse error: {response[:100]}"}
+    return {
+        "correctness_score": 0.0,
+        "correctness_reasoning": f"parse error: {response[:100]}",
+    }
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -192,13 +195,15 @@ def run(limit: int | None = None, output: Path = DEFAULT_OUTPUT) -> None:
 
         if not answer:
             print(f"  WARNING: empty answer (path={path})")
-            results.append({
-                "question": question,
-                "ground_truth": ground_truth,
-                "answer": "",
-                "path": path,
-                "error": "empty answer",
-            })
+            results.append(
+                {
+                    "question": question,
+                    "ground_truth": ground_truth,
+                    "answer": "",
+                    "path": path,
+                    "error": "empty answer",
+                }
+            )
             continue
 
         # Evaluate
@@ -209,11 +214,13 @@ def run(limit: int | None = None, output: Path = DEFAULT_OUTPUT) -> None:
 
         try:
             relevance = evaluate_answer_relevance(question, answer, judge_llm)
-        except Exception as e:
+        except Exception:
             relevance = {"answer_relevance_score": 0.0}
 
         try:
-            correctness = evaluate_correctness(question, ground_truth, answer, judge_llm)
+            correctness = evaluate_correctness(
+                question, ground_truth, answer, judge_llm
+            )
         except Exception as e:
             correctness = {"correctness_score": 0.0, "correctness_reasoning": str(e)}
 
@@ -252,7 +259,8 @@ def run(limit: int | None = None, output: Path = DEFAULT_OUTPUT) -> None:
 
     simple_path = [r for r in valid if r.get("path") == "simple"]
     false_sufficiency_cases = [
-        r for r in simple_path
+        r
+        for r in simple_path
         if r.get("correctness_score", 10) < FALSE_SUFFICIENCY_THRESHOLD
     ]
     false_sufficiency_rate = (
@@ -299,7 +307,11 @@ def run(limit: int | None = None, output: Path = DEFAULT_OUTPUT) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate V7 RAG pipeline")
-    parser.add_argument("--limit", type=int, default=None, help="Limit number of questions")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Output JSONL path")
+    parser.add_argument(
+        "--limit", type=int, default=None, help="Limit number of questions"
+    )
+    parser.add_argument(
+        "--output", type=Path, default=DEFAULT_OUTPUT, help="Output JSONL path"
+    )
     args = parser.parse_args()
     run(limit=args.limit, output=args.output)

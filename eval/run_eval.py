@@ -253,22 +253,29 @@ def run(
             "correct_abstain_rate": round(compute_correct_abstain_rate(results), 4),
             "inversion_rate": round(compute_inversion_rate(results), 4),
             "citation_rate_mean": round(
-                sum(r.get("citation_rate", 0.0) for r in answered) / len(answered)
-                if answered
-                else 0.0,
+                (
+                    sum(r.get("citation_rate", 0.0) for r in answered) / len(answered)
+                    if answered
+                    else 0.0
+                ),
                 4,
             ),
             "citation_in_retrieval_mean": round(
-                sum(r.get("citation_in_retrieval", 0.0) for r in answered)
-                / len(answered)
-                if answered
-                else 0.0,
+                (
+                    sum(r.get("citation_in_retrieval", 0.0) for r in answered)
+                    / len(answered)
+                    if answered
+                    else 0.0
+                ),
                 4,
             ),
             "citation_doc_match_mean": round(
-                sum(r.get("citation_doc_match", 0.0) for r in answered) / len(answered)
-                if answered
-                else 0.0,
+                (
+                    sum(r.get("citation_doc_match", 0.0) for r in answered)
+                    / len(answered)
+                    if answered
+                    else 0.0
+                ),
                 4,
             ),
             **retrieval_stats,

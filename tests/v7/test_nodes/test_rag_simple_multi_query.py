@@ -7,7 +7,6 @@ import pytest
 from src.v7.nodes import rag_simple as rag_simple_mod
 from src.v7.nodes.rag_simple import rag_simple
 
-
 # ─── Helpers ──────────────────────────────────────────────────────────────
 
 
@@ -199,9 +198,9 @@ class TestMultiQueryExpand:
         result = rag_simple(_make_state())
         passages = result["retrieval_attempts"][0]["passages"]
         chunk_ids = [p.get("chunk_id") for p in passages]
-        assert chunk_ids.count("shared_chunk") == 1, (
-            "Duplicate passages must be deduped"
-        )
+        assert (
+            chunk_ids.count("shared_chunk") == 1
+        ), "Duplicate passages must be deduped"
 
     @pytest.mark.unit
     def test_expand_fn_failure_falls_back_to_single_query(self, monkeypatch):
@@ -286,9 +285,9 @@ class TestMultiQueryExpand:
 
         result = rag_simple(_make_state())
         attempt = result["retrieval_attempts"][0]
-        assert abs(attempt["top_score"] - 0.72) < 0.01, (
-            f"top_score must be from original query (0.72), got {attempt['top_score']}"
-        )
+        assert (
+            abs(attempt["top_score"] - 0.72) < 0.01
+        ), f"top_score must be from original query (0.72), got {attempt['top_score']}"
 
     @pytest.mark.unit
     def test_no_expand_fn_injected_single_query_mode(self, monkeypatch):
