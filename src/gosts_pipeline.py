@@ -1,7 +1,7 @@
 """Упрощённый RAG-pipeline для коллекции ГОСТов ЕРС-Инжиниринг.
 
 Без domain gate, без LangGraph — прямой путь:
-    semantic search → FlashRank rerank → Gemini generate
+    semantic search → FlashRank rerank → DeepSeek generate
 
 Используется из api.py для эндпоинта POST /query/gosts.
 """
@@ -90,8 +90,8 @@ def _rerank(
 
 
 def _generate(query: str, passages: list[dict[str, Any]]) -> str:
-    from langchain_core.messages import HumanMessage
-    from src.llm_factory import get_gemini_llm
+    import os
+    from openai import OpenAI
 
     def _short_source(p: dict[str, Any]) -> str:
         raw = p.get("metadata", {}).get("source", "")
@@ -112,9 +112,17 @@ def _generate(query: str, passages: list[dict[str, Any]]) -> str:
         "Ответ:"
     )
     try:
-        llm = get_gemini_llm(thinking_budget=0)
-        response = llm.invoke([HumanMessage(content=prompt)])
-        return str(response.content).strip()
+        client = OpenAI(
+            api_key=os.environ["DEEPSEEK_API_KEY"],
+            base_url="https://api.deepseek.com",
+        )
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2048,
+            temperature=0,
+        )
+        return response.choices[0].message.content.strip()
     except Exception as exc:
         logger.warning("gosts_pipeline: generate failed", error=str(exc))
         return "\n\n".join(p.get("text", "") for p in passages[:5])
